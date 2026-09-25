@@ -57,7 +57,9 @@ export function createAssist({ player, faction, map }) {
           if (!spot) noSpotUntil = obs.tick + 32;
           if (spot) {
             const site = { x: spot.tx + sd.size / 2, y: spot.ty + sd.size / 2 };
-            const pool = workers.filter(w => w.order.type === 'gather' && !w.hidden);
+            // prefer a miner; if nobody is mining (fields run dry), any worker not already building will do
+            let pool = workers.filter(w => w.order.type === 'gather' && !w.hidden);
+            if (!pool.length) pool = workers.filter(w => (w.order.type === 'idle' || w.order.type === 'move') && !w.hidden);
             const w = (pool.some(w => !w.carry) ? pool.filter(w => !w.carry) : pool).sort((a, b) => d2(a, site) - d2(b, site))[0];
             if (w) {
               const key = `${F.supply}:${spot.tx},${spot.ty}`;

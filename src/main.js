@@ -560,6 +560,8 @@ function updateHud() {
   $('rSup').textContent = pl ? `${fmtSup(pl.supplyUsed)}/${pl.supplyCap}` : '—';
   $('rSup').title = pl ? `Supply used / provided. Ceiling ${pl.supplyMax}: each extra base you hold raises it by ${SUPPLY_PER_BASE}, up to ${MAP_SIZES[st.mapSize].supplyMax} on this map.` : '';
   $('rSup').classList.toggle('blocked', !!pl && pl.supplyUsed >= pl.supplyCap && pl.supplyCap < pl.supplyMax);
+  // the ceiling, on maps where territory can raise it
+  $('rSupMax').textContent = pl && MAP_SIZES[st.mapSize].supplyMax > 100 ? `max ${pl.supplyMax}` : '';
   $('clock').textContent = fmtTime(st.tick / TICK_RATE);
   const w = st.weather, wd = WEATHER[w.type], left = (w.until - st.tick) / TICK_RATE;
   $('weatherInd').innerHTML = `<b>${wd.name}</b>${weatherEffects(wd)} · ${left < 30 ? `<span style="color:#e8c86a">${WEATHER[w.next].name} in ${fmtTime(left)}</span>` : `then ${WEATHER[w.next].name}`}`;
