@@ -139,7 +139,7 @@ src/map.js                seeded map generator (plateaus, ramps, expansions, obs
 src/sim.js                deterministic simulation, fog of war, observe()
 src/path.js               A* + path smoothing
 src/rules.js              building placement rules
-src/render.js             3/4-view canvas renderer, fog overlay, minimap
+src/render.js             isometric canvas renderer, procedural art, fog overlay, minimap
 src/main.js               menu, game loop, input, HUD, bot hosting
 src/assist.js             economy assistant for human players
 src/bots/                 bot registry, worker wrapper, shared placement, reference bot

@@ -3,7 +3,7 @@
 import { createGame, step, issue, observe, publicMap, placementCtx } from './sim.js';
 import { TICK_RATE, UNITS, BUILDINGS, FACTIONS, PLAYER_COLORS, PLAYER_NAMES, MAX_SUPPLY, buildingsOf } from './data.js';
 import { checkPlacement } from './rules.js';
-import { createRenderer, T } from './render.js';
+import { createRenderer } from './render.js';
 import { BOTS } from './bots/index.js';
 import { createAssist } from './assist.js';
 
@@ -137,7 +137,7 @@ function startGame(cfg) {
   setupViewSelect();
   G.R.resize();
   const me = G.human >= 0 ? st.players[G.human].start : { x: st.N / 2, y: st.N / 2 };
-  G.R.centerOn(me.x, me.y + 2);
+  G.R.centerOn(me.x + 1.5, me.y + 1.5);
   $('btnPause').textContent = 'Pause';
   $('btnSpeed').textContent = SPEEDS[G.speedI] + '×';
   if (G.human >= 0) {
@@ -312,7 +312,7 @@ function boxSelect(r, shift) {
     if (u.kind !== 'unit' || u.hidden) continue;
     if (pickOwner >= 0 ? u.owner !== pickOwner : false) continue;
     const p = G.R.worldToScreen(u.x, u.y);
-    if (p.x >= x0 && p.x <= x1 && p.y >= y0 - 8 && p.y <= y1 + 4) ids.push(u.id);
+    if (p.x >= x0 && p.x <= x1 && p.y >= y0 - 4 && p.y <= y1 + 20 * G.R.zoom) ids.push(u.id); // sprites stand above their ground point
   }
   if (!ids.length) return;
   if (shift && selected().every(own)) for (const id of ids) G.sel.add(id);
@@ -657,7 +657,7 @@ canvas.addEventListener('wheel', e => {
   else { G.R.cam.x += e.deltaX / G.R.zoom; G.R.cam.y += e.deltaY / G.R.zoom; G.R.clampCam(); }
 }, { passive: false });
 
-function miniToWorld(e) { const p = localPos(e, mini); const N = G.state.N; return { x: p.x / mini.clientWidth * N, y: p.y / mini.clientHeight * N }; }
+function miniToWorld(e) { const p = localPos(e, mini); return G.R.miniToWorld(p.x, p.y); }
 let miniDrag = false;
 mini.addEventListener('mousedown', e => {
   if (!G.state) return;
@@ -708,7 +708,7 @@ window.addEventListener('keydown', e => {
   if (k === 'Backspace') {
     e.preventDefault();
     const H = G.human;
-    if (H >= 0) { const b = [...G.state.ents.values()].find(x => x.kind === 'building' && x.owner === H && BUILDINGS[x.type].base); const s = b || G.state.players[H].start; G.R.centerOn(s.x, s.y + 2); }
+    if (H >= 0) { const b = [...G.state.ents.values()].find(x => x.kind === 'building' && x.owner === H && BUILDINGS[x.type].base); const s = b || G.state.players[H].start; G.R.centerOn(s.x + 1.5, s.y + 1.5); }
     return;
   }
   if (k === 'Tab') { e.preventDefault(); if (G.lastAlert) G.R.centerOn(G.lastAlert.x, G.lastAlert.y); return; }
