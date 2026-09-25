@@ -1,7 +1,7 @@
 // Browser front end: menu, game loop, human input, HUD, bot hosting.
 
 import { createGame, step, issue, observe, publicMap, placementCtx } from './sim.js';
-import { TICK_RATE, UNITS, BUILDINGS, FACTIONS, PLAYER_COLORS, PLAYER_NAMES, MAX_SUPPLY, REPAIR_COST, COLONY_SHIELD, MAP_SIZES, buildingsOf } from './data.js';
+import { TICK_RATE, UNITS, BUILDINGS, FACTIONS, PLAYER_COLORS, PLAYER_NAMES, MAX_SUPPLY, REPAIR_COST, COLONY_SHIELD, MAP_SIZES, WEATHER, buildingsOf } from './data.js';
 import { checkPlacement } from './rules.js';
 import { createRenderer } from './render.js';
 import { BOTS } from './bots/index.js';
@@ -49,6 +49,7 @@ const HELP = [
   ['Left click / drag', 'Select units (drag a box). Shift adds. Double-click selects all of that type on screen.'],
   ['Right click (or Ctrl+click)', 'Move, attack, gather, repair a damaged building with workers, or set a rally point for buildings'],
   ['R, then click', 'Repair a damaged building (workers; Vanguard engineers also fix Crawlers and Hawks)'],
+  ['Terrain and weather', 'Mountains and deep rivers block ground units (flyers pass over). Fords cross rivers, but wading is slow. Rain and snow slow everyone; fog and dust storms cut sight. The forecast is next to the clock'],
   ['Colony shield', 'Once every other building type is built, build the shield generator (Z) in your main base. Select it and press D to raise a dome enemies can neither enter nor shoot through, until it fades or is shot down'],
   ['Q then click', 'Gather: send workers to a mineral field or your finished gas building'],
   ['A then click', 'Attack-move (fight anything on the way) or attack a target'],
@@ -207,6 +208,7 @@ function handleEvent(ev) {
   if (ev.type === 'msg' && ev.player === H) feed(ev.text, 'warn');
   else if (ev.type === 'attacked' && ev.player === H) { feed(ev.player === H ? 'You are under attack!' : '', 'alert'); G.lastAlert = { x: ev.x, y: ev.y }; }
   else if (ev.type === 'complete' && ev.player === H) feed(`${BUILDINGS[ev.btype].name} complete`, 'good');
+  else if (ev.type === 'weather') { const wd = WEATHER[ev.weather]; feed(`Weather: ${wd.name}${weatherEffects(wd)}`, ev.weather === 'clear' ? 'good' : 'warn'); }
   else if (ev.type === 'dome') {
     const mine = ev.player === H, who = `${PLAYER_NAMES[ev.player]}'s`;
     const text = { up: mine ? `Colony shield raised for ${COLONY_SHIELD.duration} s` : `${who} colony shield is up`, fading: mine ? 'Colony shield fading: 15 seconds left' : '', expired: mine ? 'Colony shield has faded' : `${who} colony shield has faded`, broken: mine ? 'Colony shield destroyed!' : `${who} colony shield has been broken`, lost: mine ? 'Colony shield lost with its generator' : '' }[ev.what];
@@ -484,6 +486,14 @@ function cardButtons() {
   return out;
 }
 
+function weatherEffects(wd) {
+  const bits = [];
+  if (wd.sight) bits.push(`sight ${wd.sight}`);
+  if (wd.speed < 1) bits.push(`speed −${Math.round(100 - wd.speed * 100)}%`);
+  if (wd.airSpeed < 1) bits.push(`flyers −${Math.round(100 - wd.airSpeed * 100)}%`);
+  return bits.length ? ` (${bits.join(', ')})` : '';
+}
+
 function abbrev(name) {
   const w = name.split(' ');
   return (w.length > 1 ? w.map(s => s[0]).join('') : name.slice(0, 4)).toUpperCase();
@@ -550,6 +560,8 @@ function updateHud() {
   $('rSup').textContent = pl ? `${fmtSup(pl.supplyUsed)}/${pl.supplyCap}` : '—';
   $('rSup').classList.toggle('blocked', !!pl && pl.supplyUsed >= pl.supplyCap && pl.supplyCap < MAX_SUPPLY);
   $('clock').textContent = fmtTime(st.tick / TICK_RATE);
+  const w = st.weather, wd = WEATHER[w.type], left = (w.until - st.tick) / TICK_RATE;
+  $('weatherInd').innerHTML = `<b>${wd.name}</b>${weatherEffects(wd)} · ${left < 30 ? `<span style="color:#e8c86a">${WEATHER[w.next].name} in ${fmtTime(left)}</span>` : `then ${WEATHER[w.next].name}`}`;
   const dm = pl && pl.dome;
   $('domeInd').classList.toggle('hidden', !dm);
   if (dm) $('domeInd').textContent = `Shield ${fmtTime((dm.until - st.tick) / TICK_RATE)} · ${Math.ceil(100 * dm.hp / dm.maxHp)}%`;

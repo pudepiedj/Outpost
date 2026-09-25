@@ -41,11 +41,16 @@ export function createPathfinder(N) {
   const DIRS = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2]];
 
   // Returns a list of [x, y] waypoints (tile centres, last one possibly the exact goal) or null.
-  function find(walk, elev, sx, sy, gx, gy, maxNodes = Math.max(14000, size * 0.4)) {
+  // slow: optional per-tile extra cost (fords). region: optional static walkable-area labels; a goal in a
+  // different area than the start is answered at once (null) instead of flooding the whole map.
+  // The returned path has .partial = true when the node budget ran out before reaching the goal.
+  function find(walk, elev, sx, sy, gx, gy, maxNodes = Math.max(14000, size * 0.4), slow = null, region = null) {
     let stx = Math.floor(sx), sty = Math.floor(sy);
     let gtx = Math.floor(gx), gty = Math.floor(gy);
     if (gtx < 0 || gty < 0 || gtx >= N || gty >= N) return null;
-    const ok = (x, y) => x >= 0 && y >= 0 && x < N && y < N && walk[y * N + x];
+    const r0 = region ? region[Math.floor(sy) * N + Math.floor(sx)] : 0;
+    const ok0 = (x, y) => x >= 0 && y >= 0 && x < N && y < N && walk[y * N + x];
+    const ok = region && r0 ? (x, y) => ok0(x, y) && region[y * N + x] === r0 : ok0;
     let exactGoal = true;
     if (!ok(gtx, gty)) {
       exactGoal = false;
@@ -61,8 +66,13 @@ export function createPathfinder(N) {
       [gtx, gty] = best;
     }
     if (stx === gtx && sty === gty) return [[exactGoal ? gx : gtx + 0.5, exactGoal ? gy : gty + 0.5]];
+    if (!ok0(stx, sty)) { const s = [[1, 0], [-1, 0], [0, 1], [0, -1]].find(([dx, dy]) => ok(stx + dx, sty + dy)); if (s) { stx += s[0]; sty += s[1]; } }
 
+    // budget in proportion to the trip: a short hop that needs a huge detour is treated as blocked (buildings in the way)
+    maxNodes = Math.min(maxNodes, 3000 + 40 * ((gtx - stx) ** 2 + (gty - sty) ** 2));
     gen++; heapN = 0;
+    // weighted A*: long routes lean harder on the heuristic (far fewer tiles searched, routes within a few % of optimal)
+    const W = Math.hypot(gtx - stx, gty - sty) > 30 ? 1.4 : 1.001;
     const start = sty * N + stx, goal = gty * N + gtx;
     const h = (x, y) => { const dx = Math.abs(x - gtx), dy = Math.abs(y - gty); return (dx + dy) + (Math.SQRT2 - 2) * Math.min(dx, dy); };
     g[start] = 0; came[start] = -1; open[start] = gen; push(start, h(stx, sty));
@@ -89,10 +99,10 @@ export function createPathfinder(N) {
           if (Math.abs(s1 - ce) > 1 || Math.abs(s2 - ce) > 1 || Math.abs(s1 - ne) > 1 || Math.abs(s2 - ne) > 1) continue;
         }
         if (closed[n] === gen) continue;
-        const ng = g[cur] + cost;
+        const ng = g[cur] + (slow && slow[n] ? cost * 2.5 : cost);
         if (open[n] === gen && ng >= g[n]) continue;
         open[n] = gen; g[n] = ng; came[n] = cur;
-        push(n, ng + h(nx, ny) * 1.001);
+        push(n, ng + h(nx, ny) * W);
       }
     }
     const end = found ? goal : bestNode;
@@ -101,6 +111,7 @@ export function createPathfinder(N) {
     for (let n = end; n !== start && n !== -1; n = came[n]) pts.push([n % N + 0.5, ((n / N) | 0) + 0.5]);
     pts.reverse();
     if (found && exactGoal) pts[pts.length - 1] = [gx, gy];
+    pts.partial = !found && expanded > maxNodes;
     return pts;
   }
 

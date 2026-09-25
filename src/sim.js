@@ -8,9 +8,9 @@
 import {
   TICK_RATE, DT, MAX_SUPPLY, FACTIONS, UNITS, BUILDINGS, MAP_SIZES, def,
   MINE_TIME, MINE_AMOUNT, GAS_TIME, GAS_AMOUNT, LARVA_TIME, LARVA_MAX,
-  SHIELD_REGEN, SHIELD_DELAY, QUEUE_MAX, REPAIR_COST, COLONY_SHIELD, canHit,
+  SHIELD_REGEN, SHIELD_DELAY, QUEUE_MAX, REPAIR_COST, COLONY_SHIELD, FORD_SPEED, WEATHER, WEATHER_CALM_START, canHit,
 } from './data.js';
-import { generateMap, mulberry32, HIGH } from './map.js';
+import { generateMap, mulberry32, HIGH, DECO_FORD } from './map.js';
 import { createPathfinder, lineWalkable } from './path.js';
 import { checkPlacement, isPowered } from './rules.js';
 
@@ -33,8 +33,13 @@ export function createGame({ seed = 1, slots, mapSize = 'medium' }) {
     over: false, winner: -1,
     pf: createPathfinder(N),
     circles: new Map(),
+    weather: { type: 'clear', until: WEATHER_CALM_START * TICK_RATE, next: null }, wrng: mulberry32(seed ^ 0x5eed1e55),
   };
+  state.weather.next = rollWeather(state, 'clear');
   for (let i = 0; i < N * N; i++) state.walk[i] = map.pass[i];
+  state.slow = map.deco.map(d => (d === DECO_FORD ? 1 : 0)); // fords cost the pathfinder extra
+  state.region = labelRegions(map);
+  state.pathCache = new Map();
 
   for (const r of map.resources) {
     const e = addEntity(state, {
@@ -76,6 +81,25 @@ export function createGame({ seed = 1, slots, mapSize = 'medium' }) {
   return state;
 }
 
+// Label the areas you can walk between (terrain only, buildings ignored), so impossible routes fail fast.
+function labelRegions(map) {
+  const N = map.size, lab = new Int32Array(N * N);
+  let next = 0;
+  for (let s = 0; s < N * N; s++) {
+    if (lab[s] || !map.pass[s]) continue;
+    const id = ++next, stack = [s]; lab[s] = id;
+    while (stack.length) {
+      const t = stack.pop(), x = t % N, y = (t / N) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy, n = ny * N + nx;
+        if (nx < 0 || ny < 0 || nx >= N || ny >= N || lab[n] || !map.pass[n] || Math.abs(map.elev[t] - map.elev[n]) > 1) continue;
+        lab[n] = id; stack.push(n);
+      }
+    }
+  }
+  return lab;
+}
+
 function addEntity(state, e) {
   e.id = state.nextId++;
   e.dead = false;
@@ -85,6 +109,7 @@ function addEntity(state, e) {
 
 function stampOcc(state, tx, ty, w, h, id) {
   const N = state.N;
+  if (state.pathCache) state.pathCache.clear();
   for (let y = ty; y < ty + h; y++) for (let x = tx; x < tx + w; x++) {
     const i = y * N + x;
     state.occ[i] = id;
@@ -398,6 +423,7 @@ export function step(state) {
   for (const b of buildings) if (!b.dead) updateBuilding(state, b);
   regen(state, units, buildings);
   updateDomes(state);
+  updateWeather(state);
   removeDead(state);
   updateSupply(state);
   if (state.tick % 2 === 0) updateVisibility(state);
@@ -567,12 +593,25 @@ function removeDead(state) {
   }
 }
 
+// Workers walk the same long trips again and again: reuse a route between the same two tiles for a while.
+// Any change to buildings (stampOcc) clears the cache.
+function cachedPath(state, x, y, gx, gy) {
+  const N = state.N, s = tileOf(state, x, y), g = tileOf(state, gx, gy);
+  if (Math.hypot(gx - x, gy - y) < 20) return state.pf.find(state.walk, state.map.elev, x, y, gx, gy, undefined, state.slow, state.region);
+  const key = s * N * N + g, hit = state.pathCache.get(key);
+  if (hit && state.tick - hit.t < 16 * 60) { const p = hit.path.map(q => q.slice()); p.partial = hit.path.partial; if (p.length) p[p.length - 1] = hit.path.partial ? p[p.length - 1] : [gx, gy]; return p; }
+  const path = state.pf.find(state.walk, state.map.elev, x, y, gx, gy, undefined, state.slow, state.region);
+  if (path) { if (state.pathCache.size > 4000) state.pathCache.clear(); state.pathCache.set(key, { t: state.tick, path }); }
+  return path;
+}
+
 // Path-following movement. Returns 'arrived', 'moving' or 'failed'.
 function moveTo(state, u, gx, gy, arrive, chasing) {
   const dGoal = Math.hypot(gx - u.x, gy - u.y);
   if (dGoal <= arrive + 0.05) { u.path = null; return 'arrived'; }
+  const W = WEATHER[state.weather.type];
   if (u.air) { // flyers ignore terrain and buildings
-    const k = Math.min(1, UNITS[u.type].speed * DT / dGoal);
+    const k = Math.min(1, UNITS[u.type].speed * W.airSpeed * DT / dGoal);
     u.facing = Math.atan2(gy - u.y, gx - u.x);
     tryMove(state, u, u.x + (gx - u.x) * k, u.y + (gy - u.y) * k);
     u.path = [[gx, gy]];
@@ -582,7 +621,7 @@ function moveTo(state, u, gx, gy, arrive, chasing) {
   const needPath = !u.path || !u.pathGoal || Math.hypot(u.pathGoal[0] - gx, u.pathGoal[1] - gy) > (chasing ? 1.5 : 0.01) || state.tick >= u.repathAt;
   if (needPath) {
     if (lineWalkable(state.walk, state.map.elev, N, u.x, u.y, gx, gy) && state.walk[tileOf(state, gx, gy)]) u.path = [[gx, gy]];
-    else u.path = state.pf.find(state.walk, state.map.elev, u.x, u.y, gx, gy);
+    else u.path = cachedPath(state, u.x, u.y, gx, gy);
     u.pathI = 0; u.pathGoal = [gx, gy];
     u.repathAt = state.tick + (chasing ? 24 : 96) + (u.id % 8);
     if (!u.path || !u.path.length) { u.path = null; return 'failed'; }
@@ -596,7 +635,7 @@ function moveTo(state, u, gx, gy, arrive, chasing) {
   let [wx, wy] = u.path[u.pathI];
   const last = u.pathI === u.path.length - 1;
   if (!last && Math.hypot(wx - u.x, wy - u.y) < 0.35) { u.pathI++;[wx, wy] = u.path[u.pathI]; }
-  const sp = UNITS[u.type].speed * DT;
+  const sp = UNITS[u.type].speed * W.speed * (state.map.deco[tileOf(state, u.x, u.y)] === DECO_FORD ? FORD_SPEED : 1) * DT;
   const dx = wx - u.x, dy = wy - u.y, dd = Math.hypot(dx, dy);
   if (dd > 1e-6) {
     u.facing = Math.atan2(dy, dx);
@@ -605,9 +644,10 @@ function moveTo(state, u, gx, gy, arrive, chasing) {
   }
   if (last && dd <= sp + 0.01) {
     if (Math.hypot(gx - u.x, gy - u.y) <= arrive + 0.35) { u.path = null; return 'arrived'; }
-    // path ended short of the goal (blocked / partial path)
+    // path ended short of the goal: a long route cut off by the search budget carries on from here
+    const partial = u.path.partial;
     u.path = null;
-    return chasing ? 'moving' : 'failed';
+    return chasing || partial ? 'moving' : 'failed';
   }
   // stuck detection
   if (state.tick % 16 === u.id % 16) {
@@ -745,13 +785,15 @@ function gatherStep(state, u, o) {
   }
   if (o.phase === 'toDrop') {
     if (!u.carry) { o.phase = 'toRes'; return; }
-    const drop = nearestDropoff(state, u.owner, u.x, u.y);
+    // pick a drop-off once and stick to it (two at the same distance used to make workers dither)
+    let drop = o.drop && state.ents.get(o.drop);
+    if (!drop || drop.dead || !drop.done || drop.owner !== u.owner) { drop = nearestDropoff(state, u.owner, u.x, u.y); o.drop = drop ? drop.id : 0; }
     if (!drop) { setOrder(u, { type: 'idle' }); return; }
     const r = moveTo(state, u, drop.x, drop.y, drop.size / 2 + 0.55);
     if (r === 'arrived' || gap(u, drop) < 0.6) {
       if (u.carry.kind === 'gas') { pl.gas += u.carry.amount; pl.stats.gasMined += u.carry.amount; }
       else { pl.minerals += u.carry.amount; pl.stats.mined += u.carry.amount; }
-      u.carry = null;
+      u.carry = null; o.drop = 0;
       if (o.res && state.ents.get(o.res)) o.phase = 'toRes';
       else {
         const alt = nearestResource(state, u.x, u.y, 'mineral', 12);
@@ -997,6 +1039,25 @@ function hitDome(state, u, t, dm, d) {
   if (state.tick - pl.lastAttackMsg > TICK_RATE * 12) { pl.lastAttackMsg = state.tick; state.events.push({ type: 'attacked', player: dm.owner, x: hx, y: hy }); }
 }
 
+// ---------------------------------------------------------------- weather
+
+function rollWeather(state, prev) {
+  const opts = Object.entries(WEATHER).filter(([k]) => k !== prev);
+  let x = state.wrng() * opts.reduce((n, [, w]) => n + w.weight, 0);
+  for (const [k, w] of opts) { x -= w.weight; if (x <= 0) return k; }
+  return opts[0][0];
+}
+
+function updateWeather(state) {
+  const w = state.weather;
+  if (state.tick < w.until) return;
+  const d = WEATHER[w.next].dur;
+  w.type = w.next;
+  w.until = state.tick + Math.round((d[0] + state.wrng() * (d[1] - d[0])) * TICK_RATE);
+  w.next = rollWeather(state, w.type);
+  state.events.push({ type: 'weather', weather: w.type });
+}
+
 // ---------------------------------------------------------------- fog of war
 
 function circle(state, r) {
@@ -1019,7 +1080,8 @@ function updateVisibility(state) {
   for (const e of state.ents.values()) {
     if (e.owner < 0 || e.dead || e.hidden) continue;
     const pl = state.players[e.owner];
-    const sight = e.kind === 'unit' ? UNITS[e.type].sight : (e.done ? BUILDINGS[e.type].sight : 4);
+    const ws = WEATHER[state.weather.type].sight;
+    const sight = Math.max(3, (e.kind === 'unit' ? UNITS[e.type].sight : (e.done ? BUILDINGS[e.type].sight : 4)) + (e.kind === 'unit' ? ws : Math.round(ws / 2)));
     const cx = Math.floor(e.x), cy = Math.floor(e.y);
     const vl = e.air ? 1 : level(elev[cy * N + cx]);
     const vis = pl.visible, ex = pl.explored;
@@ -1115,6 +1177,7 @@ export function observe(state, p) {
     mine, enemies, remembered, resources,
     visible: pl.visible.slice(), explored: pl.explored.slice(),
     players: state.players.map(q => ({ id: q.id, active: q.active, alive: q.alive })),
+    weather: { ...state.weather, next: state.weather.next },
     domes: state.players.filter(q => q.dome && (q.id === p || pl.explored[Math.floor(q.dome.y) * state.N + Math.floor(q.dome.x)])).map(q => ({ ...q.dome })),
     start: pl.start,
   };

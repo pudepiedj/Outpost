@@ -62,6 +62,13 @@ Flyers cross cliffs and see up onto high ground. Only ranged units, towers and o
 Crawlers, Biters, Wardens and workers can't. Any worker can repair its own buildings (R); Vanguard engineers
 can also repair Crawlers and Hawks. Repair runs at build speed and costs 30% of the price for a full repair.
 
+**Terrain and weather.** Mountain ranges and deep rivers block ground units; flyers pass over both.
+Ranges have gaps you can walk through, and rivers have shallow fords where units wade across at about half
+speed. Weather rolls across the whole map every minute or two (the first three minutes are always clear):
+rain (a little slower, sight −1), snow (slower, flyers slightly slower, sight −2), fog (sight −4) and dust
+storms (slower, flyers much slower, sight −3). The current weather and the next one are shown next to the
+clock. Settings: `WEATHER` and `FORD_SPEED` in `src/data.js`.
+
 **Colony shield.** Once you have built every other building type of your faction, you can build its shield
 generator (Bulwark Generator, Carapace Heart or Sanctum Projector; key Z) inside your main base. Only one can
 exist at a time. Select it and press **D** to raise a shimmering dome over the main base (not expansions).
@@ -108,7 +115,7 @@ export function createBot({ player, faction, map, style }) {
 Register it in `src/bots/index.js`. It then appears in the menu and can be used in the arena.
 In the browser each bot runs in its own Web Worker.
 
-**`map`** (static, public): `size`, `elev` (0 low, 1 ramp, 2 high), `pass` (1 walkable terrain),
+**`map`** (static, public): `size`, `elev` (0 low, 1 ramp, 2 high), `pass` (1 walkable terrain; fords are walkable but slow),
 `starts` (all possible start locations), `bases` (every expansion site), `ramps`.
 
 **`obs`** (per tick, fog-filtered):
@@ -123,6 +130,7 @@ In the browser each bot runs in its own Web Worker.
 | `resources` | mineral fields and geysers on explored tiles (`amount` only if visible) |
 | `visible`, `explored` | `Uint8Array(size*size)`, row-major |
 | `players` | `{id, active, alive}` for each slot |
+| `weather` | `{type, until, next}`: see `WEATHER` in data.js |
 | `domes` | raised colony shields you know of: `{owner, x, y, r, hp, maxHp, until}` |
 
 **Commands** (`units` is an array of your unit ids):
@@ -162,7 +170,7 @@ runs a two-player game. Slot spec is `faction:style[:botId]`.
 ```
 index.html, style.css     page and HUD
 src/data.js               units, buildings, factions: all tunable numbers live here
-src/map.js                seeded map generator (plateaus, ramps, expansions, obstacles)
+src/map.js                seeded map generator (plateaus, ramps, expansions, rivers, mountains, obstacles)
 src/sim.js                deterministic simulation, fog of war, observe()
 src/path.js               A* + path smoothing
 src/rules.js              building placement rules

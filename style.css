@@ -36,6 +36,9 @@ button, select, input { font: inherit; color: inherit; }
 .ico.gas { background: var(--gas); border-radius: 50%; }
 .ico.sup { background: #e8c86a; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
 #rSup.blocked { color: var(--bad); }
+#mid { display: flex; align-items: center; gap: 12px; }
+#weatherInd { font-size: 12px; color: var(--dim); white-space: nowrap; }
+#weatherInd b { color: #d8e4f0; font-weight: 600; }
 #clock { font-size: 16px; color: var(--dim); font-variant-numeric: tabular-nums; }
 #domeInd { position: absolute; left: 50%; top: 40px; transform: translateX(-50%); font-size: 13px; color: #9fe0ff; border: 1px solid #3a7fae; background: #0d2233cc; border-radius: 4px; padding: 2px 8px; font-variant-numeric: tabular-nums; box-shadow: 0 0 10px #4fb4ff44; }
 .ctl { display: flex; gap: 6px; }

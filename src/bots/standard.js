@@ -247,7 +247,7 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
         const bd = BUILDINGS[F.base];
         const ctx = placementCtxFromObs(obs, map, knownBlocked(obs, map));
         const taken = b => blds.some(x => d2(x, b) < 4) || obs.enemies.concat(obs.remembered).some(x => x.size && Math.hypot(x.x - b.x, x.y - b.y) < 8);
-        const spots = map.bases.filter(b => !taken(b)).sort((a, b) => d2(a, home) - d2(b, home));
+        const spots = map.bases.filter(b => !taken(b) && (spotTries.get(`base:${b.x},${b.y}`) || 0) < 3).sort((a, b) => d2(a, home) - d2(b, home));
         const spot = spots[0];
         if (!spot) return;
         const tx = Math.floor(spot.x) - 1, ty = Math.floor(spot.y) - 1;
@@ -256,7 +256,9 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
         const explored = obs.explored[ty * N + tx] && obs.explored[(ty + 2) * N + tx + 2];
         if (!explored) { if (w.order.type !== 'move') cmds.push({ type: 'move', units: [w.id], x: spot.x, y: spot.y + 2.5 }); return; }
         if (!afford(bd.cost)) { if (d2(w, spot) > 6 && w.order.type !== 'move') cmds.push({ type: 'move', units: [w.id], x: spot.x, y: spot.y + 2.5 }); return; }
-        if (!checkPlacement(ctx, F.base, tx, ty).ok) return;
+        const key = `base:${spot.x},${spot.y}`;
+        if (!checkPlacement(ctx, F.base, tx, ty).ok) { spotTries.set(key, (spotTries.get(key) || 0) + 1); return; }
+        spotTries.set(key, (spotTries.get(key) || 0) + 1);
         cmds.push({ type: 'build', units: [w.id], btype: F.base, tx, ty });
         spend(bd.cost);
         expander = 0;

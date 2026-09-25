@@ -3,8 +3,8 @@
 // Procedural art (upright buildings and units with visible faces), cliffs, fog of war, effects,
 // and a diamond minimap. Terrain is pre-rendered lazily in screen-space chunks.
 
-import { UNITS, BUILDINGS, PLAYER_COLORS, COLONY_SHIELD } from './data.js';
-import { LOW, RAMP, HIGH, DECO_ROCK, DECO_WATER } from './map.js';
+import { UNITS, BUILDINGS, PLAYER_COLORS, COLONY_SHIELD, WEATHER } from './data.js';
+import { LOW, RAMP, HIGH, DECO_ROCK, DECO_WATER, DECO_MOUNTAIN, DECO_FORD } from './map.js';
 import { isVisibleTo } from './sim.js';
 
 export const T = 32;            // unit/art scale in pixels per tile at zoom 1
@@ -30,6 +30,8 @@ function valueNoise(x, y, cell, s) {
 function tileHSL(e, d, x, y) {
   const n = (valueNoise(x, y, 7, 3) - 0.5) * 8 + (valueNoise(x, y, 2.5, 4) - 0.5) * 3 + (hash(x, y) - 0.5) * 1.2;
   if (d === DECO_WATER) return [206, 42, 22 + n * 0.4];
+  if (d === DECO_FORD) return [192, 26, 36 + n * 0.4];
+  if (d === DECO_MOUNTAIN) return [28, 9, 30 + n * 0.6];
   if (d === DECO_ROCK) return [26, 10, 15 + n * 0.5];
   if (e === HIGH) return [37, 19, 36 + n];
   if (e === RAMP) return [34, 20, 32 + n];
@@ -46,8 +48,8 @@ function makeTerrain(map) {
   const N = map.size;
   const E = (x, y) => (x < 0 || y < 0 || x >= N || y >= N ? -1 : map.elev[y * N + x]);
   const D = (x, y) => (x < 0 || y < 0 || x >= N || y >= N ? DECO_ROCK : map.deco[y * N + x]);
-  const X0 = -N * HW, Y0 = -40;
-  const cols = Math.ceil(2 * N * HW / CW), rows = Math.ceil((2 * N * HH + CLIFF + 60) / CHH);
+  const X0 = -N * HW, Y0 = -100;
+  const cols = Math.ceil(2 * N * HW / CW), rows = Math.ceil((2 * N * HH + CLIFF + 120) / CHH);
   const cache = new Map();
 
   function diamond(g, x, y, grow = 0) {
@@ -58,19 +60,35 @@ function makeTerrain(map) {
     g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(isoX(x, y), isoY(x, y)) : g.moveTo(isoX(x, y), isoY(x, y)))); g.closePath();
   }
 
+  const wet = d => d === DECO_WATER || d === DECO_FORD;
   function ground(g, x, y) {
     const i = y * N + x, e = map.elev[i], d = map.deco[i];
+    if (d === DECO_FORD) { // shallows: sandy bed seen through clear water, pebbles, ripples
+      g.fillStyle = hsl([36, 24, 38 + (hash(x, y, 3) - 0.5) * 4]); diamond(g, x, y, 0.6); g.fill();
+      g.fillStyle = 'rgba(70,140,190,0.45)'; diamond(g, x, y, 0.6); g.fill();
+      for (let k = 0; k < 5; k++) {
+        const px = isoX(x + hash(x, y, k + 1), y + hash(x, y, k + 11)), py = isoY(x + hash(x, y, k + 1), y + hash(x, y, k + 11));
+        g.fillStyle = 'rgba(200,190,160,0.55)'; g.beginPath(); g.ellipse(px, py, 2 + hash(x, y, k + 5) * 2, 1.2, 0, 0, TAU); g.fill();
+      }
+      g.strokeStyle = 'rgba(220,240,255,0.30)'; g.lineWidth = 1;
+      for (let k = 0; k < 2; k++) { const o = hash(x, y, 20 + k), sx = isoX(x + o, y + 0.3 + k * 0.4), sy = isoY(x + o, y + 0.3 + k * 0.4); g.beginPath(); g.moveTo(sx - 9, sy); g.quadraticCurveTo(sx, sy - 3, sx + 9, sy); g.stroke(); }
+      for (const [dx, dy, pts] of [
+        [0, -1, [[x, y], [x + 1, y], [x + 1, y + 0.1], [x, y + 0.1]]], [-1, 0, [[x, y], [x + 0.1, y], [x + 0.1, y + 1], [x, y + 1]]],
+        [0, 1, [[x, y + 0.9], [x + 1, y + 0.9], [x + 1, y + 1], [x, y + 1]]], [1, 0, [[x + 0.9, y], [x + 1, y], [x + 1, y + 1], [x + 0.9, y + 1]]],
+      ]) if (!wet(D(x + dx, y + dy))) { g.fillStyle = 'rgba(214,194,146,0.5)'; wquad(g, pts); g.fill(); }
+      return;
+    }
     const col = d === DECO_ROCK ? [26, 12, 19 + (hash(x, y, 3) - 0.5) * 3] : tileHSL(e, d, x, y);
     g.fillStyle = hsl(col); diamond(g, x, y, 0.6); g.fill();
     if (d === DECO_WATER) {
       // banks: dark drop along the back edges, sand along any shore
       for (const [dx, dy, pts] of [
         [0, -1, [[x, y], [x + 1, y], [x + 1, y + 0.3], [x, y + 0.3]]], [-1, 0, [[x, y], [x + 0.3, y], [x + 0.3, y + 1], [x, y + 1]]],
-      ]) if (D(x + dx, y + dy) !== DECO_WATER) { g.fillStyle = 'rgba(0,10,25,0.45)'; wquad(g, pts); g.fill(); }
+      ]) if (!wet(D(x + dx, y + dy))) { g.fillStyle = 'rgba(0,10,25,0.45)'; wquad(g, pts); g.fill(); }
       for (const [dx, dy, pts] of [
         [0, -1, [[x, y], [x + 1, y], [x + 1, y + 0.1], [x, y + 0.1]]], [-1, 0, [[x, y], [x + 0.1, y], [x + 0.1, y + 1], [x, y + 1]]],
         [0, 1, [[x, y + 0.88], [x + 1, y + 0.88], [x + 1, y + 1], [x, y + 1]]], [1, 0, [[x + 0.88, y], [x + 1, y], [x + 1, y + 1], [x + 0.88, y + 1]]],
-      ]) if (D(x + dx, y + dy) !== DECO_WATER) { g.fillStyle = 'rgba(214,194,146,0.55)'; wquad(g, pts); g.fill(); }
+      ]) if (!wet(D(x + dx, y + dy))) { g.fillStyle = 'rgba(214,194,146,0.55)'; wquad(g, pts); g.fill(); }
       const o = 0.25 + hash(x, y, 5) * 0.5, sx = isoX(x + o, y + 0.5), sy = isoY(x + o, y + 0.5);
       g.strokeStyle = 'rgba(170,215,255,0.16)'; g.lineWidth = 1.5;
       g.beginPath(); g.moveTo(sx - 12, sy); g.quadraticCurveTo(sx, sy - 4, sx + 12, sy); g.stroke();
@@ -130,6 +148,26 @@ function makeTerrain(map) {
 
   function objects(g, x, y) {
     const i = y * N + x, e = map.elev[i], d = map.deco[i];
+    if (d === DECO_MOUNTAIN) {
+      // one peak per tile; tiles deep inside a range get taller peaks, so ridges rise to a spine
+      let inner = 0;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (D(x + dx, y + dy) === DECO_MOUNTAIN) inner++;
+      const px = isoX(x + 0.3 + hash(x, y, 1) * 0.4, y + 0.3 + hash(x, y, 2) * 0.4), py = isoY(x + 0.3 + hash(x, y, 1) * 0.4, y + 0.3 + hash(x, y, 2) * 0.4) + 6;
+      const h = 18 + inner * 2.2 + hash(x, y, 3) * 14, w = 26 + hash(x, y, 4) * 12, lean = (hash(x, y, 5) - 0.5) * 12;
+      const top = [px + lean, py - h], L = [px - w, py], R = [px + w * 0.9, py], F = [px + lean * 0.3, py + 7];
+      g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.ellipse(px + 8, py + 4, w * 1.1, 8, 0, 0, TAU); g.fill();
+      const lit = 38 + hash(x, y, 6) * 8;
+      g.fillStyle = hsl([28, 10, lit]); g.beginPath(); g.moveTo(...L); g.lineTo(...top); g.lineTo(...F); g.closePath(); g.fill();
+      g.fillStyle = hsl([26, 12, lit - 16]); g.beginPath(); g.moveTo(...top); g.lineTo(...R); g.lineTo(...F); g.closePath(); g.fill();
+      g.strokeStyle = 'rgba(0,0,0,0.18)'; g.lineWidth = 1;
+      for (let k = 0; k < 3; k++) { const t = 0.3 + k * 0.2; g.beginPath(); g.moveTo(top[0] + (L[0] - top[0]) * t, top[1] + (L[1] - top[1]) * t); g.lineTo(top[0] + (F[0] - top[0]) * (t + 0.15), top[1] + (F[1] - top[1]) * (t + 0.15)); g.stroke(); }
+      if (h > 38) { // snow cap
+        const c = Math.min(0.42, (h - 30) / 60), sl = [top[0] + (L[0] - top[0]) * c, top[1] + (L[1] - top[1]) * c], sr = [top[0] + (R[0] - top[0]) * c, top[1] + (R[1] - top[1]) * c], sf = [top[0] + (F[0] - top[0]) * c * 1.2, top[1] + (F[1] - top[1]) * c * 1.2];
+        g.fillStyle = '#eef3f6'; g.beginPath(); g.moveTo(...sl); g.lineTo(...top); g.lineTo(...sf); g.lineTo(sl[0] + (sf[0] - sl[0]) * 0.5, sl[1] + 3); g.closePath(); g.fill();
+        g.fillStyle = '#b9c6d0'; g.beginPath(); g.moveTo(...top); g.lineTo(...sr); g.lineTo(sr[0] + (sf[0] - sr[0]) * 0.5, sr[1] + 2); g.lineTo(...sf); g.closePath(); g.fill();
+      }
+      return;
+    }
     if (d === DECO_ROCK) {
       const k = 2 + Math.floor(hash(x, y, 9) * 2);
       const rocks = [];
@@ -179,7 +217,7 @@ function makeTerrain(map) {
     const ox = X0 + ci * CW, oy = Y0 + cj * CHH;
     g.translate(-ox, -oy);
     const u0 = Math.floor(ox / HW) - 2, u1 = Math.ceil((ox + CW) / HW) + 2;
-    const v0 = Math.floor((oy - CLIFF - 12) / HH) - 2, v1 = Math.ceil((oy + CHH + 40) / HH) + 1;
+    const v0 = Math.floor((oy - CLIFF - 12) / HH) - 2, v1 = Math.ceil((oy + CHH + 100) / HH) + 1; // peaks rise up to ~90 px
     const tiles = [];
     for (let v = Math.max(0, v0); v <= Math.min(2 * N - 2, v1); v++) for (let u = u0; u <= u1; u++) {
       if ((u + v) & 1) continue;
@@ -315,6 +353,8 @@ export function createRenderer(canvas, mini, state) {
         if (ev.splash) r.effects.push({ type: 'boom', x: ev.tx, y: ev.ty, size: 1.6, t0: now + 0.05, dur: 0.35 });
       } else if (ev.type === 'death') {
         r.effects.push({ type: 'boom', x: ev.x, y: ev.y, size: ev.kind === 'building' ? ev.size * 1.2 : 1.1, t0: now, dur: ev.kind === 'building' ? 0.9 : 0.45, big: ev.kind === 'building' });
+      } else if (ev.type === 'weather') {
+        r.weatherSince = now;
       } else if (ev.type === 'domeHit') {
         r.effects.push({ type: 'ripple', x: ev.x, y: ev.y, owner: ev.player, t0: now, dur: 0.5 });
       } else if (ev.type === 'dome') {
@@ -514,6 +554,7 @@ export function createRenderer(canvas, mini, state) {
     r.effects = r.effects.filter(fx => now - fx.t0 < fx.dur);
     for (const fx of r.effects) drawEffect(fx, now);
     for (const q of state.players) if (q.dome && domeSeen(q.dome)) drawDome(q.dome, now);
+    drawWeather(now);
 
     // overlays
     for (const [, e, ghost] of list) {
@@ -1277,6 +1318,62 @@ export function createRenderer(canvas, mini, state) {
       ctx.strokeStyle = `rgba(255,230,180,${0.6 * (1 - k)})`; ctx.lineWidth = 2 * z; ellipse(x, y + rad * 0.3, rad * 1.3, rad * 0.65, false, true);
       if (fx.big) { ctx.fillStyle = `rgba(60,50,40,${0.5 * (1 - k)})`; circle(x + T * z * 0.3, y - T * z * 0.4 - k * T * z, rad * 0.6, true); }
     }
+  }
+
+  // --------------------------------------------------------------- weather (screen-space particles)
+  function drawWeather(now) {
+    const type = state.weather.type;
+    if (type === 'clear') return;
+    const k = Math.min(1, (now - (r.weatherSince ?? -99)) / 4); // fade in over 4 s
+    const W = r.W, H = r.H, ox = r.cam.x * z, oy = r.cam.y * z; // particles drift with the world a little
+    const rnd = (i, s) => hash(i, s, 91);
+    ctx.save();
+    if (type === 'rain') {
+      ctx.fillStyle = `rgba(40,60,90,${0.18 * k})`; ctx.fillRect(0, 0, W, H);
+      ctx.strokeStyle = `rgba(190,210,235,${0.45 * k})`; ctx.lineWidth = 1;
+      const n = Math.round(W * H / 2600);
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const sp = 900 + rnd(i, 1) * 500, x = ((rnd(i, 2) * (W + 200) - now * sp * 0.25 - ox * 0.3) % (W + 200) + W + 200) % (W + 200) - 100;
+        const y = ((rnd(i, 3) * (H + 100) + now * sp - oy * 0.3) % (H + 100) + H + 100) % (H + 100) - 50;
+        ctx.moveTo(x, y); ctx.lineTo(x - 4, y + 16);
+      }
+      ctx.stroke();
+      const flash = (now % 23) < 0.12 || ((now + 0.3) % 23) < 0.06; // the odd lightning flash
+      if (flash) { ctx.fillStyle = `rgba(230,240,255,${0.25 * k})`; ctx.fillRect(0, 0, W, H); }
+    } else if (type === 'snow') {
+      ctx.fillStyle = `rgba(220,230,245,${0.14 * k})`; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = `rgba(255,255,255,${0.85 * k})`;
+      const n = Math.round(W * H / 3500);
+      for (let i = 0; i < n; i++) {
+        const sp = 30 + rnd(i, 1) * 50, s = 1 + rnd(i, 4) * 2.2;
+        const x = ((rnd(i, 2) * W + Math.sin(now * 0.8 + i) * 18 - ox * 0.5) % W + W) % W;
+        const y = ((rnd(i, 3) * H + now * sp - oy * 0.5) % H + H) % H;
+        ctx.beginPath(); ctx.arc(x, y, s, 0, TAU); ctx.fill();
+      }
+    } else if (type === 'fog' || type === 'dust') {
+      const dust = type === 'dust', base = dust ? '150,105,55' : '200,206,214';
+      ctx.fillStyle = `rgba(${base},${(dust ? 0.30 : 0.26) * k})`; ctx.fillRect(0, 0, W, H);
+      for (let i = 0; i < 14; i++) { // drifting banks
+        const sp = dust ? 90 : 12, R = (dust ? 160 : 220) + rnd(i, 5) * 180;
+        const x = ((rnd(i, 2) * (W + 2 * R) + now * sp * (0.6 + rnd(i, 6)) - ox * 0.6) % (W + 2 * R) + W + 2 * R) % (W + 2 * R) - R;
+        const y = ((rnd(i, 3) * (H + 2 * R) + Math.sin(now * 0.1 + i) * 30 - oy * 0.6) % (H + 2 * R) + H + 2 * R) % (H + 2 * R) - R;
+        const g = ctx.createRadialGradient(x, y, 0, x, y, R);
+        g.addColorStop(0, `rgba(${base},${(dust ? 0.30 : 0.35) * k})`); g.addColorStop(1, `rgba(${base},0)`);
+        ctx.fillStyle = g; ctx.fillRect(x - R, y - R, 2 * R, 2 * R);
+      }
+      if (dust) {
+        ctx.strokeStyle = `rgba(215,170,110,${0.35 * k})`; ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let i = 0, n = Math.round(W * H / 5000); i < n; i++) {
+          const x = ((rnd(i, 2) * (W + 100) + now * (500 + rnd(i, 1) * 300) - ox * 0.3) % (W + 100) + W + 100) % (W + 100) - 50;
+          const y = ((rnd(i, 3) * H + Math.sin(now * 2 + i) * 6 - oy * 0.3) % H + H) % H;
+          ctx.moveTo(x, y); ctx.lineTo(x - 24 - rnd(i, 7) * 20, y + 2);
+        }
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
   }
 
   // --------------------------------------------------------------- colony shield dome

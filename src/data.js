@@ -83,6 +83,19 @@ export const BUILDINGS = {
   assimilator: { faction: 'ascendant', name: 'Assimilator', size: 2, hp: 450, shield: 450, armor: 1, cost: [75, 0], time: 25, onGeyser: true, sight: 7, key: 'E' },
 };
 
+// Terrain and weather. Wading through a ford multiplies ground speed by FORD_SPEED.
+export const FORD_SPEED = 0.55;
+// Weather rolls across the whole map. speed/airSpeed multiply movement; sight is added to sight ranges
+// (never below 3). weight: how often it comes up; the first few minutes are always clear.
+export const WEATHER = {
+  clear: { name: 'Clear',      speed: 1,    airSpeed: 1,   sight: 0,  weight: 45, dur: [90, 180] },
+  rain:  { name: 'Rain',       speed: 0.85, airSpeed: 1,   sight: -1, weight: 20, dur: [60, 120] },
+  fog:   { name: 'Fog',        speed: 1,    airSpeed: 1,   sight: -4, weight: 15, dur: [50, 100] },
+  dust:  { name: 'Dust storm', speed: 0.8,  airSpeed: 0.6, sight: -3, weight: 12, dur: [40, 90] },
+  snow:  { name: 'Snow',       speed: 0.7,  airSpeed: 0.85, sight: -2, weight: 8, dur: [60, 120] },
+};
+export const WEATHER_CALM_START = 180; // seconds of clear weather at the start of a game
+
 export const MINERAL_AMOUNT = 1500;
 export const GEYSER_AMOUNT = 2500;
 export const MINE_TIME = 2.5, MINE_AMOUNT = 5;
