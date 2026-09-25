@@ -1,7 +1,7 @@
 // Browser front end: menu, game loop, human input, HUD, bot hosting.
 
 import { createGame, step, issue, observe, publicMap, placementCtx } from './sim.js';
-import { TICK_RATE, UNITS, BUILDINGS, FACTIONS, PLAYER_COLORS, PLAYER_NAMES, MAX_SUPPLY, buildingsOf } from './data.js';
+import { TICK_RATE, UNITS, BUILDINGS, FACTIONS, PLAYER_COLORS, PLAYER_NAMES, MAX_SUPPLY, REPAIR_COST, buildingsOf } from './data.js';
 import { checkPlacement } from './rules.js';
 import { createRenderer } from './render.js';
 import { BOTS } from './bots/index.js';
@@ -46,7 +46,8 @@ function buildMenu() {
 
 const HELP = [
   ['Left click / drag', 'Select units (drag a box). Shift adds. Double-click selects all of that type on screen.'],
-  ['Right click (or Ctrl+click)', 'Move, attack, gather, or set a rally point for buildings'],
+  ['Right click (or Ctrl+click)', 'Move, attack, gather, repair a damaged building with workers, or set a rally point for buildings'],
+  ['R, then click', 'Repair a damaged building (workers; Vanguard engineers also fix Crawlers and Hawks)'],
   ['Q then click', 'Gather: send workers to a mineral field or your finished gas building'],
   ['A then click', 'Attack-move (fight anything on the way) or attack a target'],
   ['S / H / M', 'Stop / hold position / move'],
@@ -58,7 +59,7 @@ const HELP = [
   ['Backspace / Tab', 'Jump to your base / to the latest alert'],
   ['Space, − / =', 'Pause, slower / faster'],
   ['Esc', 'Cancel targeting or placement'],
-  ['Auto-workers / Auto-supply', 'Top-bar switches (on with "Human + economy assist"): keep training workers, send idle ones near base back to mining, staff new gas buildings, and build supply before you are blocked'],
+  ['Auto-workers / Auto-supply', 'Top-bar switches (on with "Human + economy assist"): keep training workers, send idle ones near base back to mining, staff new gas buildings, repair damaged buildings near your bases, and build supply before you are blocked'],
 ];
 
 $('reseed').onclick = () => { $('seed').value = 1 + Math.floor(Math.random() * 999999); };
@@ -330,10 +331,15 @@ function smartCommand(sx, sy) {
     const ids = units.map(u => u.id);
     if (t && t.owner >= 0 && t.owner !== G.human && t.kind !== 'resource') { cmd({ type: 'attack', units: ids, target: t.id }); marker(t.x, t.y, true); return; }
     if (t && t.kind === 'resource' && t.type === 'mineral') { cmd({ type: 'gather', units: ids, target: t.id }); marker(t.x, t.y); return; }
+    if (t && t.kind === 'unit' && t.owner === G.human && UNITS[t.type].mech && t.hp < t.maxHp && units.some(u => UNITS[u.type].worker) && FACTIONS[st.players[G.human].faction].buildStyle === 'construct') {
+      cmd({ type: 'repair', units: units.filter(u => UNITS[u.type].worker).map(u => u.id), target: t.id }); marker(t.x, t.y); return;
+    }
     if (t && t.kind === 'building' && t.owner === G.human) {
       const bd = BUILDINGS[t.type];
       const workers = units.filter(u => UNITS[u.type].worker);
       if (workers.length) {
+        if (bd.onGeyser && t.done && t.hp >= t.maxHp) { cmd({ type: 'gather', units: workers.map(u => u.id), target: t.id }); marker(t.x, t.y); return; }
+        if (t.done && t.hp < t.maxHp) { cmd({ type: 'repair', units: workers.map(u => u.id), target: t.id }); marker(t.x, t.y); return; }
         if (bd.onGeyser && t.done) { cmd({ type: 'gather', units: workers.map(u => u.id), target: t.id }); marker(t.x, t.y); return; }
         if (!t.done && FACTIONS[st.players[G.human].faction].buildStyle === 'construct') { for (const u of workers) cmd({ type: 'resume', units: [u.id], target: t.id }); marker(t.x, t.y); return; }
         if (bd.onGeyser && !t.done) { feed(`${bd.name} isn't finished yet`, 'warn'); return; }
@@ -386,6 +392,12 @@ function applyMode(sx, sy, shift) {
     if (!shift) G.mode = null;
     return;
   }
+  if (m.type === 'repair') {
+    if (!t || t.owner !== G.human || t.kind === 'resource') { feed('Click one of your damaged buildings' + (FACTIONS[G.state.players[G.human].faction].buildStyle === 'construct' ? ' or mechanical units' : ''), 'warn'); return; }
+    cmd({ type: 'repair', units: units.filter(u => UNITS[u.type].worker).map(u => u.id), target: t.id }); marker(t.x, t.y);
+    if (!shift) G.mode = null;
+    return;
+  }
   if (m.type === 'attack') {
     if (t && t.kind !== 'resource' && t.owner !== G.human) { cmd({ type: 'attack', units: ids, target: t.id }); marker(t.x, t.y, true); }
     else { cmd({ type: 'attackMove', units: ids, x: w.x, y: w.y }); marker(w.x, w.y, true); }
@@ -418,6 +430,7 @@ function cardButtons() {
     out.push({ key: 'A', glyph: 'ATK', name: 'Attack', tip: 'Click a target, or ground to attack-move', act: () => { G.mode = { type: 'attack' }; }, active: G.mode?.type === 'attack' });
     out.push({ key: 'H', glyph: 'HOLD', name: 'Hold position', tip: 'Stay put and fire at anything in range', act: () => cmd({ type: 'hold', units: units.map(u => u.id) }) });
     if (units.some(u => UNITS[u.type].worker)) {
+      out.push({ key: 'R', glyph: 'REPAIR', name: 'Repair', tip: `Click a damaged building of yours${pl.faction === 'vanguard' ? ' or a Crawler/Hawk' : ''}. Restores it at its build speed for ${Math.round(REPAIR_COST * 100)}% of its cost. Right-click does the same. Several workers repair faster.`, act: () => { G.mode = { type: 'repair' }; }, active: G.mode?.type === 'repair' });
       out.push({ key: 'Q', glyph: 'GATHER', name: 'Gather', tip: 'Click a mineral field, or your finished gas building (refinery/extractor/assimilator). Same as right-click or Ctrl+click on it.', act: () => { G.mode = { type: 'gather' }; }, active: G.mode?.type === 'gather' });
       for (const bt of buildingsOf(pl.faction)) {
         const bd = BUILDINGS[bt], miss = reqMissing(bt);
@@ -469,12 +482,13 @@ function buildingTip(bt) {
   if (b.power) bits.push(`Powers buildings within ${b.power}`);
   if (b.onGeyser) bits.push('Build on a gas geyser');
   if (b.needsPower) bits.push('Needs pylon power');
+  if (b.damage) bits.push(`Defence: shoots ground and air units, damage ${b.damage}, range ${b.range}`);
   if (b.faction === 'swarm' && !b.base && !b.onGeyser) bits.push('Must be placed on creep');
   return bits.join('. ') + `. Build time ${b.time}s.`;
 }
 function unitTip(ut) {
   const u = UNITS[ut];
-  return `HP ${u.hp}${u.shield ? ` + ${u.shield} shields` : ''}${u.armor ? `, armour ${u.armor}` : ''}. Damage ${u.damage}${u.splash ? ' (splash)' : ''}, range ${u.range > 1 ? u.range : 'melee'}. Supply ${u.supply * (u.count || 1)}. Train time ${u.time}s.`;
+  return `${u.air ? 'Flying: crosses cliffs, sees up onto high ground. ' : ''}HP ${u.hp}${u.shield ? ` + ${u.shield} shields` : ''}${u.armor ? `, armour ${u.armor}` : ''}. Damage ${u.damage}${u.splash ? ' (splash)' : ''}, range ${u.range > 1 ? u.range : 'melee'}${u.air || u.antiAir ? ', hits air and ground' : ', ground only'}. Supply ${u.supply * (u.count || 1)}. Train time ${u.time}s.`;
 }
 
 function renderCard() {
@@ -553,7 +567,7 @@ function renderInfo() {
     const stats = [`HP <b>${Math.ceil(e.hp)}/${e.maxHp}</b>`];
     if (e.maxShield) stats.push(`Shields <b>${Math.ceil(e.shield)}/${e.maxShield}</b>`);
     if (e.armor) stats.push(`Armour <b>${e.armor}</b>`);
-    if (e.kind === 'unit') { stats.push(`Damage <b>${d.damage}${d.splash ? ' splash' : ''}</b>`); stats.push(`Range <b>${d.range > 1 ? d.range : 'melee'}</b>`); stats.push(`Sight <b>${d.sight}</b>`); }
+    if (e.kind === 'unit' || d.damage) { stats.push(`Damage <b>${d.damage}${d.splash ? ' splash' : ''}</b>`); stats.push(`Range <b>${d.range > 1 ? d.range : 'melee'}</b>`); stats.push(`Sight <b>${d.sight}</b>`); }
     html = `<div class="iTitle">${d.name} ${ownerName}</div><div class="iStats">${stats.map(s => `<span>${s}</span>`).join('')}</div>`;
     const mineOrSpectate = e.owner === G.R.viewer || G.R.viewer < 0;
     if (mineOrSpectate) html += `<div class="iStatus">${statusText(e)}</div>`;
@@ -594,6 +608,7 @@ function statusText(e) {
       const what = r && r.kind === 'building' ? 'gas' : 'minerals';
       return ({ toRes: `Heading to ${what}`, waiting: 'Waiting for a free patch', mining: `Harvesting ${what}`, toDrop: 'Returning cargo' })[o.phase] + carry;
     }
+    case 'repair': { const t = st.ents.get(o.target); return t ? `Repairing ${(UNITS[t.type] || BUILDINGS[t.type]).name}` : 'Repairing'; }
     case 'build': return o.phase === 'toSite' ? `Going to build ${BUILDINGS[o.btype].name}` : `Constructing ${BUILDINGS[o.btype].name}`;
   }
   return '';

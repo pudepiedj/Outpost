@@ -12,13 +12,19 @@ import { findBuildSpot, knownBlocked, placementCtxFromObs } from './placement.js
 export const STYLES = {
   balanced: { label: 'Balanced', workers: 18, gasAt: 12, firstWave: 12, waveGrowth: 4, scoutAt: 9, expandAt: 36 },
   rush:     { label: 'Rush',     workers: 12, gasAt: 99, firstWave: 6,  waveGrowth: 3, scoutAt: 8, expandAt: 50 },
+  easy:     { label: 'Easy',     workers: 12, gasAt: 14, firstWave: 18, waveGrowth: 8, scoutAt: 12, expandAt: 60, slow: true },
 };
 
 const BUILD_ORDERS = {
   balanced: {
-    vanguard:  [['depot', 9], ['barracks', 11], ['refinery', 12], ['barracks', 14], ['factory', 16], ['barracks', 24]],
-    swarm:     [['pod', 9], ['pit', 11], ['extractor', 12], ['den', 15], ['hive', 20]],
-    ascendant: [['pylon', 8], ['gateway', 10], ['assimilator', 11], ['core', 13], ['gateway', 15], ['gateway', 24]],
+    vanguard:  [['depot', 9], ['barracks', 11], ['refinery', 12], ['barracks', 14], ['factory', 16], ['turret', 20], ['barracks', 24], ['turret', 30]],
+    swarm:     [['pod', 9], ['pit', 11], ['extractor', 12], ['den', 15], ['thorn', 18], ['hive', 20], ['thorn', 28]],
+    ascendant: [['pylon', 8], ['gateway', 10], ['assimilator', 11], ['core', 13], ['gateway', 15], ['spire', 20], ['gateway', 24], ['spire', 30]],
+  },
+  easy: {
+    vanguard:  [['depot', 9], ['barracks', 12], ['refinery', 14], ['factory', 20]],
+    swarm:     [['pod', 9], ['pit', 12], ['extractor', 14], ['den', 20]],
+    ascendant: [['pylon', 8], ['gateway', 11], ['assimilator', 13], ['core', 18]],
   },
   rush: {
     vanguard:  [['depot', 8], ['barracks', 9], ['barracks', 10], ['barracks', 13]],
@@ -131,7 +137,7 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
       }
       if (baseSites.length < wantBases && !building) expand();
       // spare money: more production
-      if (minerals > 450 && !building && producers < 6) {
+      if (minerals > 450 && !building && producers < (S.slow ? 2 : 6)) {
         const extra = faction === 'swarm' ? 'hive' : faction === 'vanguard' ? (doneOf('factory') && producers % 3 === 2 ? 'factory' : 'barracks') : 'gateway';
         if (reqOk(extra)) tryBuild(extra);
       }
@@ -165,7 +171,7 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
           continue;
         }
         if (bd.base || !bd.produces) continue;
-        if (b.queue.length >= (minerals > 600 ? 2 : 1) || !b.powered) continue;
+        if (b.queue.length >= (minerals > 600 && !S.slow ? 2 : 1) || !b.powered) continue;
         const t = pickArmyUnit(bd.produces);
         if (!t) continue;
         const d = UNITS[t];
@@ -174,6 +180,7 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
         cmds.push({ type: 'train', building: b.id, utype: t }); spend(d.cost); supplyFree -= d.supply;
       }
 
+      repairStep();
       scoutStep();
       fight();
       return cmds;
@@ -197,7 +204,7 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
         if (!opts.length) return null;
         // Prefer the most expensive unit we can afford that uses gas, else the cheapest.
         const gasUnits = opts.filter(t => UNITS[t].cost[1] > 0 && afford(UNITS[t].cost));
-        if (gasUnits.length && (army.length % 3 !== 2 || opts.length === 1)) return gasUnits.sort((a, b) => UNITS[b].cost[0] - UNITS[a].cost[0])[0];
+        if (gasUnits.length && (army.length % 3 !== 2 || opts.length === 1)) return gasUnits.sort((a, b) => UNITS[b].cost[0] - UNITS[a].cost[0])[(army.length >> 1) % gasUnits.length];
         return opts.filter(t => UNITS[t].cost[1] === 0).sort((a, b) => UNITS[a].cost[0] - UNITS[b].cost[0])[0] || opts[0];
       }
 
@@ -244,6 +251,18 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
         cmds.push({ type: 'build', units: [w.id], btype: F.base, tx, ty });
         spend(bd.cost);
         expander = 0;
+      }
+
+      function repairStep() {
+        if (minerals < 60) return;
+        for (const b of blds) {
+          if (!b.done || b.hp > b.maxHp * 0.75 || !bases.some(x => d2(x, b) < 14)) continue;
+          const on = workers.filter(w => w.order.type === 'repair' && w.order.target === b.id).length;
+          const want = b.hp < b.maxHp * 0.4 ? 3 : 2;
+          if (on >= want) continue;
+          const w = workers.filter(w => w.order.type === 'gather' && !w.carry && !w.hidden).sort((a, c) => d2(a, b) - d2(c, b)).slice(0, want - on);
+          if (w.length) cmds.push({ type: 'repair', units: w.map(x => x.id), target: b.id });
+        }
       }
 
       function scoutStep() {

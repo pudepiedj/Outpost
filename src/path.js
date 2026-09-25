@@ -84,7 +84,9 @@ export function createPathfinder(N) {
         if (Math.abs(elev[n] - ce) > 1) continue;
         if (dx && dy) {
           if (!ok(cx + dx, cy) || !ok(cx, cy + dy)) continue;
-          if (Math.abs(elev[cy * N + cx + dx] - ce) > 1 || Math.abs(elev[(cy + dy) * N + cx] - ce) > 1) continue;
+          // both corner tiles must connect to where we are and where we are going (no clipping a cliff corner)
+          const s1 = elev[cy * N + cx + dx], s2 = elev[(cy + dy) * N + cx], ne = elev[n];
+          if (Math.abs(s1 - ce) > 1 || Math.abs(s2 - ce) > 1 || Math.abs(s1 - ne) > 1 || Math.abs(s2 - ne) > 1) continue;
         }
         if (closed[n] === gen) continue;
         const ng = g[cur] + cost;

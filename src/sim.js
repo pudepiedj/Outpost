@@ -8,7 +8,7 @@
 import {
   TICK_RATE, DT, MAX_SUPPLY, FACTIONS, UNITS, BUILDINGS, def,
   MINE_TIME, MINE_AMOUNT, GAS_TIME, GAS_AMOUNT, LARVA_TIME, LARVA_MAX,
-  SHIELD_REGEN, SHIELD_DELAY, QUEUE_MAX,
+  SHIELD_REGEN, SHIELD_DELAY, QUEUE_MAX, REPAIR_COST, canHit,
 } from './data.js';
 import { generateMap, mulberry32, HIGH } from './map.js';
 import { createPathfinder, lineWalkable } from './path.js';
@@ -100,7 +100,7 @@ function createBuilding(state, owner, type, tx, ty) {
     done: false, progress: 0, lastBuilt: -1, lastHit: -1e9,
     queue: [], prodProgress: 0, rally: null, powered: true,
     larva: d.larva ? LARVA_MAX : 0, larvaTimer: 0, eggs: [],
-    geyser: 0, gasBusyUntil: 0,
+    geyser: 0, gasBusyUntil: 0, cooldown: 0, target: 0, facing: Math.PI * 0.8,
   });
   if (d.onGeyser) {
     const g = state.ents.get(state.occ[ty * state.N + tx]);
@@ -118,7 +118,7 @@ function spawnUnit(state, owner, type, near, towards) {
     maxHp: d.hp, hp: d.hp, maxShield: d.shield || 0, shield: d.shield || 0, armor: d.armor || 0,
     radius: d.radius, order: { type: 'idle' }, target: 0, cooldown: 0,
     path: null, pathI: 0, pathGoal: null, repathAt: 0, stuck: 0, lastPos: [x, y], lastHit: -1e9,
-    carry: null, hidden: false, facing: 0, resume: null,
+    carry: null, hidden: false, facing: 0, resume: null, air: !!d.air,
   });
   state.players[owner].stats.unitsBuilt++;
   return u;
@@ -257,6 +257,20 @@ export function issue(state, p, cmd) {
       for (const u of mine) if (target.id !== u.id) setOrder(u, { type: 'attack', target: target.id });
       return n > 0;
     }
+    case 'repair': {
+      // a worker restores an own finished building; Vanguard engineers also fix mechanical units
+      if (!target || target.dead || target.owner !== p) return false;
+      const ok = target.kind === 'building' ? target.done : target.kind === 'unit' && UNITS[target.type].mech && FACTIONS[pl.faction].buildStyle === 'construct';
+      if (!ok) { msg(state, p, target.kind === 'building' ? 'Finish the building first' : "Can't repair that"); return false; }
+      if (target.hp >= target.maxHp) { msg(state, p, 'Already fully repaired'); return false; }
+      let any = false;
+      for (const u of mine) {
+        if (!UNITS[u.type].worker || u === target) continue;
+        const resume = u.order.type === 'gather' ? { res: u.order.res } : u.order.type === 'repair' ? u.resume : null;
+        setOrder(u, { type: 'repair', target: target.id }); u.resume = resume; any = true;
+      }
+      return any;
+    }
     case 'gather': {
       // target: a mineral patch, or an own finished gas building
       if (!target || target.dead) return false;
@@ -389,7 +403,7 @@ function updateUnit(state, u) {
   const d = UNITS[u.type];
   u.cooldown = Math.max(0, u.cooldown - DT);
   // Pushed onto a blocked tile (e.g. a building appeared)? Pop out.
-  if (!u.hidden && !state.walk[tileOf(state, u.x, u.y)]) {
+  if (!u.air && !u.hidden && !state.walk[tileOf(state, u.x, u.y)]) {
     const [x, y] = freeSpotNear(state, { x: u.x, y: u.y, tx: Math.floor(u.x), ty: Math.floor(u.y), size: 1 }, u);
     u.x = x; u.y = y; u.path = null;
   }
@@ -415,9 +429,11 @@ function updateUnit(state, u) {
       const t = state.ents.get(o.target);
       if (!t || t.dead || !isVisibleTo(state, u.owner, t)) { setOrder(u, { type: 'idle' }); break; }
       u.target = t.id;
-      engage(state, u, t, true);
+      if (canHit(d, t)) engage(state, u, t, true);
+      else if (moveTo(state, u, t.x, t.y, 2, true) === 'failed') setOrder(u, { type: 'idle' }); // can't shoot it: follow it
       break;
     }
+    case 'repair': repairStep(state, u, o); break;
     case 'gather': gatherStep(state, u, o); break;
     case 'build': buildStep(state, u, o); break;
   }
@@ -427,7 +443,7 @@ function updateUnit(state, u) {
 function combat(state, u, radius, chase) {
   const d = UNITS[u.type];
   let t = u.target ? state.ents.get(u.target) : null;
-  if (t && (t.dead || !isVisibleTo(state, u.owner, t) || gap(u, t) > d.sight + 2)) { t = null; u.target = 0; }
+  if (t && (t.dead || !isVisibleTo(state, u.owner, t) || gap(u, t) > d.sight + 2 || !canHit(d, t))) { t = null; u.target = 0; }
   if (!t && (state.tick + u.id) % 4 === 0) {
     t = findTarget(state, u, radius);
     if (t) u.target = t.id;
@@ -439,14 +455,15 @@ function combat(state, u, radius, chase) {
 }
 
 function findTarget(state, u, radius) {
+  const d = UNITS[u.type];
   let best = null, bestScore = Infinity;
   for (const e of state.ents.values()) {
-    if (e.dead || e.owner < 0 || e.owner === u.owner || e.kind === 'resource') continue;
+    if (e.dead || e.owner < 0 || e.owner === u.owner || e.kind === 'resource' || !canHit(d, e)) continue;
     if (Math.abs(e.x - u.x) > radius + 3 || Math.abs(e.y - u.y) > radius + 3) continue;
     const g = gap(u, e);
     if (g > radius || !isVisibleTo(state, u.owner, e)) continue;
     // prefer things that can shoot back, then the nearest
-    const threat = e.kind === 'unit' && UNITS[e.type].damage && !UNITS[e.type].worker ? 0 : e.kind === 'unit' ? 4 : 8;
+    const threat = (e.kind === 'unit' && UNITS[e.type].damage && !UNITS[e.type].worker) || (e.kind === 'building' && BUILDINGS[e.type].damage) ? 0 : e.kind === 'unit' ? 4 : 8;
     const score = g + threat;
     if (score < bestScore) { bestScore = score; best = e; }
   }
@@ -466,12 +483,12 @@ function engage(state, u, t, chase) {
 }
 
 function fire(state, u, t) {
-  const d = UNITS[u.type];
-  state.events.push({ type: 'shot', from: u.id, fx: u.x, fy: u.y, tx: t.x, ty: t.y, owner: u.owner, unit: u.type, ranged: !!d.ranged, splash: !!d.splash });
+  const d = def(u.type);
+  state.events.push({ type: 'shot', from: u.id, fx: u.x, fy: u.y, tx: t.x, ty: t.y, owner: u.owner, unit: u.type, ranged: !!d.ranged, splash: !!d.splash, fair: !!u.air, tair: !!t.air });
   damage(state, t, d.damage, u);
   if (d.splash) {
     for (const e of state.ents.values()) {
-      if (e === t || e.dead || e.kind !== 'unit' || e.owner === u.owner || e.owner < 0) continue;
+      if (e === t || e.dead || e.kind !== 'unit' || e.owner === u.owner || e.owner < 0 || e.air !== t.air) continue;
       if (Math.hypot(e.x - t.x, e.y - t.y) <= d.splash + e.radius) damage(state, e, d.damage * 0.5, u);
     }
   }
@@ -495,7 +512,7 @@ function afterHit(state, e, src) {
     state.events.push({ type: 'attacked', player: e.owner, x: e.x, y: e.y });
   }
   // Idle or harvesting units fight back / call nearby friends
-  if (e.kind === 'unit' && src && !e.target && (e.order.type === 'idle') && !UNITS[e.type].worker) e.target = src.id;
+  if (e.kind === 'unit' && src && !e.target && (e.order.type === 'idle') && !UNITS[e.type].worker && canHit(UNITS[e.type], src)) e.target = src.id;
   if (e.hp <= 0) killEntity(state, e, src ? src.owner : -1);
 }
 
@@ -531,6 +548,13 @@ function removeDead(state) {
 function moveTo(state, u, gx, gy, arrive, chasing) {
   const dGoal = Math.hypot(gx - u.x, gy - u.y);
   if (dGoal <= arrive + 0.05) { u.path = null; return 'arrived'; }
+  if (u.air) { // flyers ignore terrain and buildings
+    const k = Math.min(1, UNITS[u.type].speed * DT / dGoal);
+    u.facing = Math.atan2(gy - u.y, gx - u.x);
+    tryMove(state, u, u.x + (gx - u.x) * k, u.y + (gy - u.y) * k);
+    u.path = [[gx, gy]];
+    return 'moving';
+  }
   const N = state.N;
   const needPath = !u.path || !u.pathGoal || Math.hypot(u.pathGoal[0] - gx, u.pathGoal[1] - gy) > (chasing ? 1.5 : 0.01) || state.tick >= u.repathAt;
   if (needPath) {
@@ -581,6 +605,7 @@ function canOccupy(state, fromX, fromY, x, y) {
 }
 
 function tryMove(state, u, nx, ny) {
+  if (u.air) { const N = state.N; u.x = Math.max(0.5, Math.min(N - 0.5, nx)); u.y = Math.max(0.5, Math.min(N - 0.5, ny)); return true; }
   if (canOccupy(state, u.x, u.y, nx, ny)) { u.x = nx; u.y = ny; return true; }
   if (canOccupy(state, u.x, u.y, nx, u.y)) { u.x = nx; return true; }
   if (canOccupy(state, u.x, u.y, u.x, ny)) { u.y = ny; return true; }
@@ -592,13 +617,23 @@ function separate(state, units) {
   const cell = 2, W = Math.ceil(state.N / cell);
   const grid = new Map();
   const ghost = u => u.hidden || (u.order.type === 'gather');
+  const air = units.filter(u => u.air && !u.dead);
+  for (let i = 0; i < air.length; i++) for (let j = i + 1; j < air.length; j++) {
+    const u = air[i], v = air[j];
+    let dx = v.x - u.x, dy = v.y - u.y, d = Math.hypot(dx, dy);
+    const min = (u.radius + v.radius) * 0.8;
+    if (d >= min) continue;
+    if (d < 1e-4) { dx = 1; dy = ((u.id * 7) % 5) - 2; d = Math.hypot(dx, dy); }
+    const push = (min - d) * 0.25;
+    tryMove(state, u, u.x - dx / d * push, u.y - dy / d * push); tryMove(state, v, v.x + dx / d * push, v.y + dy / d * push);
+  }
   for (const u of units) {
-    if (u.dead || ghost(u)) continue;
+    if (u.dead || u.air || ghost(u)) continue;
     const k = Math.floor(u.x / cell) + Math.floor(u.y / cell) * W;
     let arr = grid.get(k); if (!arr) grid.set(k, arr = []); arr.push(u);
   }
   for (const u of units) {
-    if (u.dead || ghost(u)) continue;
+    if (u.dead || u.air || ghost(u)) continue;
     const cx = Math.floor(u.x / cell), cy = Math.floor(u.y / cell);
     for (let yy = cy - 1; yy <= cy + 1; yy++) for (let xx = cx - 1; xx <= cx + 1; xx++) {
       const arr = grid.get(xx + yy * W); if (!arr) continue;
@@ -738,6 +773,27 @@ function buildStep(state, u, o) {
   }
 }
 
+// ---- repair
+
+function repairStep(state, u, o) {
+  const pl = state.players[u.owner];
+  const t = state.ents.get(o.target);
+  if (!t || t.dead || t.hp >= t.maxHp) { finishBuildOrder(state, u); return; }
+  if (gap(u, t) > 0.9) {
+    const r = moveTo(state, u, t.x, t.y, t.kind === 'building' ? t.size / 2 + 0.7 : t.radius + u.radius + 0.3, t.kind === 'unit');
+    if (r === 'failed' && gap(u, t) > 1.2) { msg(state, u.owner, "Can't reach it to repair"); finishBuildOrder(state, u); }
+    return;
+  }
+  u.path = null;
+  u.facing = Math.atan2(t.y - u.y, t.x - u.x);
+  const d = def(t.type);
+  const hp = Math.min(t.maxHp - t.hp, t.maxHp * DT / d.time);
+  const m = d.cost[0] * REPAIR_COST * hp / t.maxHp, g = d.cost[1] * REPAIR_COST * hp / t.maxHp;
+  if (pl.minerals < m || pl.gas < g) { msg(state, u.owner, pl.minerals < m ? 'Not enough minerals to repair' : 'Not enough gas to repair'); finishBuildOrder(state, u); return; }
+  pl.minerals -= m; pl.gas -= g;
+  t.hp += hp; t.repairedAt = state.tick;
+}
+
 function finishBuildOrder(state, u) {
   const r = u.resume; u.resume = null;
   if (r && r.res && state.ents.get(r.res)) setOrder(u, { type: 'gather', res: r.res, phase: 'toRes' });
@@ -770,6 +826,7 @@ function updateBuilding(state, b) {
     for (const eg of hatched) produce(state, b, eg.type);
     return;
   }
+  if (d.damage && b.powered) towerStep(state, b, d);
   if (b.queue.length && b.powered) {
     b.prodProgress += DT;
     if (b.prodProgress >= UNITS[b.queue[0]].time) {
@@ -777,6 +834,28 @@ function updateBuilding(state, b) {
       produce(state, b, b.queue.shift());
     }
   }
+}
+
+// Defensive buildings shoot the nearest enemy unit in range, preferring armed ones.
+function towerStep(state, b, d) {
+  b.cooldown = Math.max(0, b.cooldown - DT);
+  let t = b.target ? state.ents.get(b.target) : null;
+  if (t && (t.dead || t.kind !== 'unit' || !isVisibleTo(state, b.owner, t) || gap(t, b) > d.range)) t = null;
+  if (!t && (state.tick + b.id) % 4 === 0) {
+    let bestScore = Infinity;
+    for (const e of state.ents.values()) {
+      if (e.dead || e.kind !== 'unit' || e.owner < 0 || e.owner === b.owner || e.hidden || !canHit(d, e)) continue;
+      if (Math.abs(e.x - b.x) > d.range + 3 || Math.abs(e.y - b.y) > d.range + 3) continue;
+      const g = gap(e, b);
+      if (g > d.range || !isVisibleTo(state, b.owner, e)) continue;
+      const score = g + (UNITS[e.type].damage && !UNITS[e.type].worker ? 0 : 4);
+      if (score < bestScore) { bestScore = score; t = e; }
+    }
+  }
+  b.target = t ? t.id : 0;
+  if (!t) return;
+  b.facing = Math.atan2(t.y - b.y, t.x - b.x);
+  if (b.cooldown <= 0) { fire(state, b, t); b.cooldown = d.cooldown; }
 }
 
 function produce(state, b, type) {
@@ -843,7 +922,7 @@ function updateVisibility(state) {
     const pl = state.players[e.owner];
     const sight = e.kind === 'unit' ? UNITS[e.type].sight : (e.done ? BUILDINGS[e.type].sight : 4);
     const cx = Math.floor(e.x), cy = Math.floor(e.y);
-    const vl = level(elev[cy * N + cx]);
+    const vl = e.air ? 1 : level(elev[cy * N + cx]);
     const vis = pl.visible, ex = pl.explored;
     for (const [dx, dy] of circle(state, sight)) {
       const x = cx + dx, y = cy + dy;
@@ -894,7 +973,7 @@ function snapOwn(e) {
   const s = { id: e.id, kind: e.kind, type: e.type, owner: e.owner, x: e.x, y: e.y, hp: e.hp, maxHp: e.maxHp, shield: e.shield, maxShield: e.maxShield };
   if (e.kind === 'unit') {
     s.order = { type: e.order.type, res: e.order.res, btype: e.order.btype, tx: e.order.tx, ty: e.order.ty, bid: e.order.bid, target: e.order.target, x: e.order.x, y: e.order.y, phase: e.order.phase };
-    s.carry = e.carry ? { ...e.carry } : null; s.target = e.target; s.hidden = e.hidden;
+    s.carry = e.carry ? { ...e.carry } : null; s.target = e.target; s.hidden = e.hidden; s.air = e.air;
   } else {
     Object.assign(s, { tx: e.tx, ty: e.ty, size: e.size, done: e.done, progress: e.progress, queue: [...e.queue], larva: e.larva, eggs: e.eggs.length, powered: e.powered, rally: e.rally });
   }

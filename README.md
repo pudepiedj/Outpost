@@ -29,10 +29,11 @@ or Web Workers from `file://`.
 
 With **Human + economy assist**, two switches appear in the top bar:
 
-- **Auto-workers:** keeps every base training workers (up to about 18 per base plus 3 per gas
-  building), sends workers idle for 3 seconds near a base back to mining, and puts 3 workers on each
-  new gas building once.
-- **Auto-supply:** builds a Depot / Brood Pod / Pylon before you run out of supply.
+- **Auto-workers:** keeps every base training workers (up to about 20 per base plus 3 per gas
+  building), sends workers idle for 3 seconds near a base back to mining, puts 3 workers on each
+  new gas building once, and sends two or three workers to repair damaged buildings near your bases.
+- **Auto-supply:** builds Depots / Brood Pods / Pylons early enough that every production building
+  can keep working, and saves up for them before spending on workers.
 
 You can turn either off mid-game. The assist is a partial bot (`src/assist.js`): it acts through the
 same fog-filtered view and commands as everyone else. It will spend minerals on workers and supply,
@@ -47,6 +48,12 @@ sent back to mining after 3 seconds; one parked further out is left alone.
 | Placement | Anywhere | On creep (spread by Hives and Brood Pods) | In a Pylon power field |
 | Production | Queues in buildings | Hives grow larvae (max 3); units hatch in parallel | Queues in Gateways (need power) |
 | Special | Crawler: long range, splash | Everything regenerates; Biters come in pairs | Shields regenerate after 7 s out of combat |
+| Defence tower | Sentry Turret | Thorn Mound (on creep) | Aegis Spire (needs power) |
+| Flyer | Hawk gunship (Factory) | Stinger (Hive, needs Spitter Den) | Seraph (Gateway, needs Core) |
+
+Flyers cross cliffs and see up onto high ground. Only ranged units, towers and other flyers can hit them:
+Crawlers, Biters, Wardens and workers can't. Any worker can repair its own buildings (R); Vanguard engineers
+can also repair Crawlers and Hawks. Repair runs at build speed and costs 30% of the price for a full repair.
 
 Resources: minerals (mined from crystal fields) and gas (needs a refinery/extractor/assimilator on a geyser).
 You lose when all of your buildings are destroyed. The last player standing wins.
@@ -56,7 +63,8 @@ You lose when all of your buildings are destroyed. The last player standing wins
 | Input | Action |
 |---|---|
 | Left click / drag | Select (Shift adds, double-click selects that type on screen) |
-| Right click (or Ctrl+click) | Move / attack / gather / resume construction / set rally point |
+| Right click (or Ctrl+click) | Move / attack / gather / repair / resume construction / set rally point |
+| R, then click | Repair a damaged building (any worker) or, for Vanguard, a Crawler or Hawk |
 | Q, then click | Gather from a mineral field or your finished gas building |
 | A, then click | Attack-move or attack a target |
 | S / H / M | Stop / hold position / move |
