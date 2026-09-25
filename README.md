@@ -11,7 +11,17 @@ The core rule from the original is kept: **you see only what your units and buil
 - **Clear:** currently visible.
 - Low ground cannot see up cliffs. High ground can see down.
 
-Every player slot can be **Human**, **Human + economy assist**, **Bot** or **Empty**. Bots receive exactly the same fog-filtered
+Choose the map size in the menu: **Medium** (112×112, 3 start locations), **Large** (176×176, 5) or
+**Huge** (240×240, 6). On Large and Huge there are more start locations than players, so you have to scout
+to find the enemy. The minimap marks possible start locations you haven't seen yet. Bigger maps also have
+more expansions, including a ring of contested bases round the middle.
+
+Every player slot can be **Human**, **Human + economy assist**, **Bot** (Easy, Balanced or Rush) or **Empty**.
+Easy bots keep a small economy, never attack before minute 9, send small waves and rest for three minutes after each.
+Balanced and Rush bots scout: after the opening scout they send a surveyor (a flyer if they have one) round base
+sites they haven't seen lately, remember how many minerals are left at each, and expand to the richest reachable
+site before their own fields run dry (more bases on bigger maps). When they can't find an enemy, their army
+splits into search parties. Bots receive exactly the same fog-filtered
 view a human does. They cannot see the full game state.
 
 ## Running it
@@ -25,14 +35,24 @@ python3 ~/Development/Outpost/serve.py
 then open <http://127.0.0.1:8642>. A web server is needed because browsers won't load JS modules
 or Web Workers from `file://`.
 
+## Buildings and money
+
+A building is paid for the moment you place it (not when the worker arrives), so nothing else can spend that
+money on the way; you get it back if the build is cancelled or the worker is killed. While you are choosing a
+spot, the money is held for it. Short of money? Place it anyway: it is queued (dashed yellow outline), the
+worker waits at the site, the money is held as it comes in, and it goes up the moment you can afford it.
+Esc cancels a queued building.
+
 ## Economy assist
 
 With **Human + economy assist**, two switches appear in the top bar:
 
-- **Auto-workers:** keeps every base training workers (up to about 18 per base plus 3 per gas
-  building), sends workers idle for 3 seconds near a base back to mining, and puts 3 workers on each
-  new gas building once.
-- **Auto-supply:** builds a Depot / Brood Pod / Pylon before you run out of supply.
+- **Auto-workers:** keeps every base training workers until each mineral line is saturated (two per
+  mineral patch plus 3 per gas building). Once you have a dozen workers it only spends minerals above a
+  reserve of 125, and it never takes a Swarm Hive's last larva, so the rest of your income is yours. It also sends workers idle for 3 seconds near a base back to mining, puts 3 workers on each
+  new gas building once, and sends two or three workers to repair damaged buildings near your bases.
+- **Auto-supply:** builds Depots / Brood Pods / Pylons early enough that every production building
+  can keep working, and saves up for them before spending on workers.
 
 You can turn either off mid-game. The assist is a partial bot (`src/assist.js`): it acts through the
 same fog-filtered view and commands as everyone else. It will spend minerals on workers and supply,
@@ -47,6 +67,34 @@ sent back to mining after 3 seconds; one parked further out is left alone.
 | Placement | Anywhere | On creep (spread by Hives and Brood Pods) | In a Pylon power field |
 | Production | Queues in buildings | Hives grow larvae (max 3); units hatch in parallel | Queues in Gateways (need power) |
 | Special | Crawler: long range, splash | Everything regenerates; Biters come in pairs | Shields regenerate after 7 s out of combat |
+| Defence tower | Sentry Turret | Thorn Mound (on creep) | Aegis Spire (needs power) |
+| Flyer | Hawk gunship (Factory) | Stinger (Hive, needs Spitter Den) | Seraph (Gateway, needs Core) |
+
+Flyers cross cliffs and see up onto high ground. Only ranged units, towers and other flyers can hit them:
+Crawlers, Biters, Wardens and workers can't. Any worker can repair its own buildings (R); Vanguard engineers
+can also repair Crawlers and Hawks. Repair runs at build speed and costs 30% of the price for a full repair.
+
+**Terrain and weather.** Mountain ranges and deep rivers block ground units; flyers pass over both.
+Ranges have gaps you can walk through, and rivers have shallow fords where units wade across at about half
+speed. Weather rolls across the whole map every minute or two (the first three minutes are always clear):
+rain (a little slower, sight −1), snow (slower, flyers slightly slower, sight −2), fog (sight −4) and dust
+storms (slower, flyers much slower, sight −3). The current weather and the next one are shown next to the
+clock. Settings: `WEATHER` and `FORD_SPEED` in `src/data.js`.
+
+**Supply ceiling.** Your first base allows up to 100 supply. Every extra base you hold raises the ceiling by 25,
+up to 100 on Medium maps, 150 on Large and 200 on Huge. A base means a finished Command Hub, Hive or Nexus at least
+8 tiles from your others (a second Hive next to the first, for larvae, doesn't count). Lose a base and the ceiling
+drops again. You still need Depots, Brood Pods or Pylons to use the room. Hover over the supply figure in the top
+bar to see your current ceiling.
+
+**Colony shield.** Once you have built every other building type of your faction, you can build its shield
+generator (Bulwark Generator, Carapace Heart or Sanctum Projector; key Z) inside your main base. Only one can
+exist at a time. Select it and press **D** to raise a shimmering dome over the main base (not expansions).
+Enemies can't enter it or shoot through it. Their fire hits the dome and wears down its strength instead,
+and the generator shows through the dome, so they know what to aim for. Your own units come and go and
+fire out freely. The dome falls when its strength is gone or its time runs out, and the generator then
+recharges before it can be raised again. All the numbers are in `COLONY_SHIELD` in `src/data.js`
+(defaults: radius 12, 150 s, 6000 strength, armour 1, 150 s recharge).
 
 Resources: minerals (mined from crystal fields) and gas (needs a refinery/extractor/assimilator on a geyser).
 You lose when all of your buildings are destroyed. The last player standing wins.
@@ -56,7 +104,8 @@ You lose when all of your buildings are destroyed. The last player standing wins
 | Input | Action |
 |---|---|
 | Left click / drag | Select (Shift adds, double-click selects that type on screen) |
-| Right click (or Ctrl+click) | Move / attack / gather / resume construction / set rally point |
+| Right click (or Ctrl+click) | Move / attack / gather / repair / resume construction / set rally point |
+| R, then click | Repair a damaged building (any worker) or, for Vanguard, a Crawler or Hawk |
 | Q, then click | Gather from a mineral field or your finished gas building |
 | A, then click | Attack-move or attack a target |
 | S / H / M | Stop / hold position / move |
@@ -84,7 +133,7 @@ export function createBot({ player, faction, map, style }) {
 Register it in `src/bots/index.js`. It then appears in the menu and can be used in the arena.
 In the browser each bot runs in its own Web Worker.
 
-**`map`** (static, public): `size`, `elev` (0 low, 1 ramp, 2 high), `pass` (1 walkable terrain),
+**`map`** (static, public): `size`, `elev` (0 low, 1 ramp, 2 high), `pass` (1 walkable terrain; fords are walkable but slow),
 `starts` (all possible start locations), `bases` (every expansion site), `ramps`.
 
 **`obs`** (per tick, fog-filtered):
@@ -99,6 +148,8 @@ In the browser each bot runs in its own Web Worker.
 | `resources` | mineral fields and geysers on explored tiles (`amount` only if visible) |
 | `visible`, `explored` | `Uint8Array(size*size)`, row-major |
 | `players` | `{id, active, alive}` for each slot |
+| `weather` | `{type, until, next}`: see `WEATHER` in data.js |
+| `domes` | raised colony shields you know of: `{owner, x, y, r, hp, maxHp, until}` |
 
 **Commands** (`units` is an array of your unit ids):
 
@@ -113,6 +164,8 @@ In the browser each bot runs in its own Web Worker.
 { type: 'train', building, utype }
 { type: 'cancel', building }
 { type: 'rally', building, x, y, target? }
+{ type: 'repair', units, target }          // own damaged building (or Vanguard mech unit)
+{ type: 'shield', building }               // raise the colony shield from your generator
 ```
 
 Invalid commands are rejected by the simulation, which is the only authority. `src/rules.js`
@@ -127,7 +180,7 @@ The simulation runs in Node without the renderer, about 300× real time:
 node tools/arena.mjs --games 10 --seed 1 --p1 vanguard:balanced --p2 swarm:rush --p3 ascendant:balanced
 ```
 
-Options: `--minutes N` sets the time limit, `--verbose` prints a per-minute summary, and `--p3 off`
+Options: `--size medium|large|huge` picks the map, `--minutes N` sets the time limit, `--verbose` prints a per-minute summary, and `--p3 off`
 runs a two-player game. Slot spec is `faction:style[:botId]`.
 
 ## Layout
@@ -135,11 +188,11 @@ runs a two-player game. Slot spec is `faction:style[:botId]`.
 ```
 index.html, style.css     page and HUD
 src/data.js               units, buildings, factions: all tunable numbers live here
-src/map.js                seeded map generator (plateaus, ramps, expansions, obstacles)
+src/map.js                seeded map generator (plateaus, ramps, expansions, rivers, mountains, obstacles)
 src/sim.js                deterministic simulation, fog of war, observe()
 src/path.js               A* + path smoothing
 src/rules.js              building placement rules
-src/render.js             3/4-view canvas renderer, fog overlay, minimap
+src/render.js             isometric canvas renderer, procedural art, fog overlay, minimap
 src/main.js               menu, game loop, input, HUD, bot hosting
 src/assist.js             economy assistant for human players
 src/bots/                 bot registry, worker wrapper, shared placement, reference bot

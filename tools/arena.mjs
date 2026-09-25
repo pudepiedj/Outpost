@@ -9,13 +9,13 @@ import { BOTS } from '../src/bots/index.js';
 const args = Object.fromEntries(process.argv.slice(2).reduce((a, x, i, arr) => (x.startsWith('--') ? a.concat([[x.slice(2), arr[i + 1]]]) : a), []));
 const games = +(args.games || 3), seed0 = +(args.seed || 1), maxMin = +(args.minutes || 30);
 const slotSpec = [args.p1 || 'vanguard:balanced', args.p2 || 'swarm:balanced', args.p3 || 'ascendant:balanced'];
-const verbose = 'verbose' in args;
+const verbose = 'verbose' in args, mapSize = args.size || 'medium';
 
 const results = [];
 for (let g = 0; g < games; g++) {
   const seed = seed0 + g;
   const slots = slotSpec.map(s => (s === 'off' ? null : { faction: s.split(':')[0] }));
-  const state = createGame({ seed, slots });
+  const state = createGame({ seed, slots, mapSize });
   const map = publicMap(state);
   const bots = slotSpec.map((s, p) => {
     if (s === 'off') return null;

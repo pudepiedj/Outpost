@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+._*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Node (none needed yet, but keep them out if added)
+node_modules/
+
+# Local scratch
+*.log
+/screenshots/

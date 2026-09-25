@@ -1,9 +1,9 @@
 // Browser front end: menu, game loop, human input, HUD, bot hosting.
 
 import { createGame, step, issue, observe, publicMap, placementCtx } from './sim.js';
-import { TICK_RATE, UNITS, BUILDINGS, FACTIONS, PLAYER_COLORS, PLAYER_NAMES, MAX_SUPPLY, buildingsOf } from './data.js';
+import { TICK_RATE, UNITS, BUILDINGS, FACTIONS, PLAYER_COLORS, PLAYER_NAMES, REPAIR_COST, COLONY_SHIELD, MAP_SIZES, SUPPLY_PER_BASE, VERSION, WEATHER, buildingsOf } from './data.js';
 import { checkPlacement } from './rules.js';
-import { createRenderer, T } from './render.js';
+import { createRenderer } from './render.js';
 import { BOTS } from './bots/index.js';
 import { createAssist } from './assist.js';
 
@@ -40,13 +40,18 @@ function buildMenu() {
     box.appendChild(row);
   }
   $('seed').value = prefs?.seed || 1 + Math.floor(Math.random() * 99999);
+  $('mapSize').innerHTML = Object.entries(MAP_SIZES).map(([k, m]) => `<option value="${k}"${k === (prefs?.mapSize || 'medium') ? ' selected' : ''}>${m.name} (${m.size}×${m.size}, ${m.starts} start locations)</option>`).join('');
+  $('version').textContent = `Version: ${VERSION}`;
   $('factionInfo').innerHTML = Object.values(FACTIONS).map(f => `<div><b>${f.name}</b>${f.blurb}</div>`).join('');
   for (const el of document.querySelectorAll('.helpBody')) el.innerHTML = HELP.map(([k, v]) => `<kbd>${k}</kbd><span>${v}</span>`).join('');
 }
 
 const HELP = [
   ['Left click / drag', 'Select units (drag a box). Shift adds. Double-click selects all of that type on screen.'],
-  ['Right click (or Ctrl+click)', 'Move, attack, gather, or set a rally point for buildings'],
+  ['Right click (or Ctrl+click)', 'Move, attack, gather, repair a damaged building with workers, or set a rally point for buildings'],
+  ['R, then click', 'Repair a damaged building (workers; Vanguard engineers also fix Crawlers and Hawks)'],
+  ['Terrain and weather', 'Mountains and deep rivers block ground units (flyers pass over). Fords cross rivers, but wading is slow. Rain and snow slow everyone; fog and dust storms cut sight. The forecast is next to the clock'],
+  ['Colony shield', 'Once every other building type is built, build the shield generator (Z) in your main base. Select it and press D to raise a dome enemies can neither enter nor shoot through, until it fades or is shot down'],
   ['Q then click', 'Gather: send workers to a mineral field or your finished gas building'],
   ['A then click', 'Attack-move (fight anything on the way) or attack a target'],
   ['S / H / M', 'Stop / hold position / move'],
@@ -57,8 +62,9 @@ const HELP = [
   ['Minimap', 'Left click moves the camera, right click orders a move'],
   ['Backspace / Tab', 'Jump to your base / to the latest alert'],
   ['Space, − / =', 'Pause, slower / faster'],
-  ['Esc', 'Cancel targeting or placement'],
-  ['Auto-workers / Auto-supply', 'Top-bar switches (on with "Human + economy assist"): keep training workers, send idle ones near base back to mining, staff new gas buildings, and build supply before you are blocked'],
+  ['Esc', 'Cancel targeting or placement, or a building queued for funds'],
+  ['Short of money?', 'Place a building anyway: it is queued, the worker waits at the site, and it goes up as soon as you can afford it. The money is held for it (the economy assist won\'t spend it)'],
+  ['Auto-workers / Auto-supply', 'Top-bar switches (on with "Human + economy assist"): keep training workers until the mineral lines are full (always leaving you 125 minerals), send idle ones near base back to mining, staff new gas buildings, repair damaged buildings near your bases, and build supply before you are blocked'],
 ];
 
 $('reseed').onclick = () => { $('seed').value = 1 + Math.floor(Math.random() * 999999); };
@@ -70,10 +76,11 @@ $('start').onclick = () => {
   if (slots.filter(s => s.controller !== 'off').length < 2) { err.textContent = 'At least two players are needed.'; return; }
   err.textContent = '';
   const seed = Math.max(1, Math.min(999999, parseInt($('seed').value, 10) || 1));
-  savePrefs({ slots: slots.map(s => [s.controller, s.faction]), seed });
+  const mapSize = $('mapSize').value;
+  savePrefs({ slots: slots.map(s => [s.controller, s.faction]), seed, mapSize });
   const facs = Object.keys(FACTIONS);
   for (const s of slots) if (s.faction === 'random') s.faction = facs[Math.floor(Math.random() * facs.length)];
-  startGame({ seed, slots });
+  startGame({ seed, slots, mapSize });
 };
 
 // ======================================================================= bots
@@ -112,7 +119,7 @@ class BotHost {
 function startGame(cfg) {
   for (const b of G.bots) b?.dispose();
   const slots = cfg.slots.map(s => (s.controller === 'off' ? null : { faction: s.faction }));
-  const st = createGame({ seed: cfg.seed, slots });
+  const st = createGame({ seed: cfg.seed, slots, mapSize: cfg.mapSize });
   G.state = st;
   G.human = cfg.slots.findIndex(s => s.controller.startsWith('human'));
   G.assist = null;
@@ -137,7 +144,7 @@ function startGame(cfg) {
   setupViewSelect();
   G.R.resize();
   const me = G.human >= 0 ? st.players[G.human].start : { x: st.N / 2, y: st.N / 2 };
-  G.R.centerOn(me.x, me.y + 2);
+  G.R.centerOn(me.x + 1.5, me.y + 1.5);
   $('btnPause').textContent = 'Pause';
   $('btnSpeed').textContent = SPEEDS[G.speedI] + '×';
   if (G.human >= 0) {
@@ -188,6 +195,8 @@ function tickOnce() {
       b.request(observe(st, b.p));
     }
   }
+  if (G.pending) tryPending();
+  if (G.assist) { G.assist.hold = heldCost(); G.assist.keep = G.pending ? G.pending.wid : 0; }
   if (G.assist && st.tick % 4 === 2 && st.players[G.human].alive && (G.assist.workers || G.assist.supply)) {
     for (const c of G.assist.onTick(observe(st, G.human))) {
       if (issue(st, G.human, c) && c.type === 'build') feed(`Assist: building a ${BUILDINGS[c.btype].name}`, '');
@@ -198,11 +207,35 @@ function tickOnce() {
   for (const ev of st.events) handleEvent(ev);
 }
 
+// Money the player has earmarked: a building being placed, or one queued until it can be afforded.
+function heldCost() {
+  const c = [0, 0];
+  if (G.mode?.type === 'build') { const k = BUILDINGS[G.mode.btype].cost; c[0] += k[0]; c[1] += k[1]; }
+  if (G.pending) { const k = BUILDINGS[G.pending.btype].cost; c[0] += k[0]; c[1] += k[1]; }
+  return c;
+}
+
+function tryPending() {
+  const st = G.state, p = G.pending, me = st.players[G.human], bd = BUILDINGS[p.btype];
+  const w = st.ents.get(p.wid);
+  if (!w || w.dead || !me.alive) { G.pending = null; feed(`Queued ${bd.name} cancelled: its worker is gone`, 'warn'); return; }
+  if (w.order.type !== 'move' && w.order.type !== 'idle') { G.pending = null; feed(`Queued ${bd.name} cancelled: its worker was given other orders`, 'warn'); return; }
+  if (me.minerals < bd.cost[0] || me.gas < bd.cost[1]) return;
+  G.pending = null;
+  if (!cmd({ type: 'build', units: [w.id], btype: p.btype, tx: p.tx, ty: p.ty })) feed(`Couldn't build the queued ${bd.name}`, 'warn');
+}
+
 function handleEvent(ev) {
   const st = G.state, H = G.human;
   if (ev.type === 'msg' && ev.player === H) feed(ev.text, 'warn');
   else if (ev.type === 'attacked' && ev.player === H) { feed(ev.player === H ? 'You are under attack!' : '', 'alert'); G.lastAlert = { x: ev.x, y: ev.y }; }
   else if (ev.type === 'complete' && ev.player === H) feed(`${BUILDINGS[ev.btype].name} complete`, 'good');
+  else if (ev.type === 'weather') { const wd = WEATHER[ev.weather]; feed(`Weather: ${wd.name}${weatherEffects(wd)}`, ev.weather === 'clear' ? 'good' : 'warn'); }
+  else if (ev.type === 'dome') {
+    const mine = ev.player === H, who = `${PLAYER_NAMES[ev.player]}'s`;
+    const text = { up: mine ? `Colony shield raised for ${COLONY_SHIELD.duration} s` : `${who} colony shield is up`, fading: mine ? 'Colony shield fading: 15 seconds left' : '', expired: mine ? 'Colony shield has faded' : `${who} colony shield has faded`, broken: mine ? 'Colony shield destroyed!' : `${who} colony shield has been broken`, lost: mine ? 'Colony shield lost with its generator' : '' }[ev.what];
+    if (text) feed(text, mine ? (ev.what === 'up' ? 'good' : 'alert') : 'warn');
+  }
   else if (ev.type === 'eliminated') {
     feed(`${PLAYER_NAMES[ev.player]} (${FACTIONS[st.players[ev.player].faction].name}) has been eliminated`, ev.player === H ? 'alert' : 'good');
     if (ev.player === H && !st.over) {
@@ -225,7 +258,7 @@ function gameOver() {
     <td>${p.stats.mined}</td><td>${p.stats.gasMined}</td><td>${p.stats.unitsBuilt}</td><td>${p.stats.kills}</td><td>${p.stats.losses}</td>
     <td>${p.alive ? (p.id === w ? 'Winner' : '—') : fmtTime(p.defeatedAt / TICK_RATE)}</td></tr>`).join('');
   $('goStats').innerHTML = `<tr><th>Player</th><th>Minerals</th><th>Gas</th><th>Units</th><th>Kills</th><th>Losses</th><th>Eliminated</th></tr>${rows}
-    <tr><td colspan="7" style="text-align:left;color:var(--dim)">Game length ${fmtTime(t)} · map seed ${st.seed}</td></tr>`;
+    <tr><td colspan="7" style="text-align:left;color:var(--dim)">Game length ${fmtTime(t)} · ${MAP_SIZES[st.mapSize].name} map, seed ${st.seed}</td></tr>`;
   $('gameover').classList.remove('hidden');
 }
 $('goView').onclick = () => { $('gameover').classList.add('hidden'); G.R.viewer = -1; setupViewSelect(); };
@@ -312,7 +345,7 @@ function boxSelect(r, shift) {
     if (u.kind !== 'unit' || u.hidden) continue;
     if (pickOwner >= 0 ? u.owner !== pickOwner : false) continue;
     const p = G.R.worldToScreen(u.x, u.y);
-    if (p.x >= x0 && p.x <= x1 && p.y >= y0 - 8 && p.y <= y1 + 4) ids.push(u.id);
+    if (p.x >= x0 && p.x <= x1 && p.y >= y0 - 4 && p.y <= y1 + 20 * G.R.zoom) ids.push(u.id); // sprites stand above their ground point
   }
   if (!ids.length) return;
   if (shift && selected().every(own)) for (const id of ids) G.sel.add(id);
@@ -330,10 +363,15 @@ function smartCommand(sx, sy) {
     const ids = units.map(u => u.id);
     if (t && t.owner >= 0 && t.owner !== G.human && t.kind !== 'resource') { cmd({ type: 'attack', units: ids, target: t.id }); marker(t.x, t.y, true); return; }
     if (t && t.kind === 'resource' && t.type === 'mineral') { cmd({ type: 'gather', units: ids, target: t.id }); marker(t.x, t.y); return; }
+    if (t && t.kind === 'unit' && t.owner === G.human && UNITS[t.type].mech && t.hp < t.maxHp && units.some(u => UNITS[u.type].worker) && FACTIONS[st.players[G.human].faction].buildStyle === 'construct') {
+      cmd({ type: 'repair', units: units.filter(u => UNITS[u.type].worker).map(u => u.id), target: t.id }); marker(t.x, t.y); return;
+    }
     if (t && t.kind === 'building' && t.owner === G.human) {
       const bd = BUILDINGS[t.type];
       const workers = units.filter(u => UNITS[u.type].worker);
       if (workers.length) {
+        if (bd.onGeyser && t.done && t.hp >= t.maxHp) { cmd({ type: 'gather', units: workers.map(u => u.id), target: t.id }); marker(t.x, t.y); return; }
+        if (t.done && t.hp < t.maxHp) { cmd({ type: 'repair', units: workers.map(u => u.id), target: t.id }); marker(t.x, t.y); return; }
         if (bd.onGeyser && t.done) { cmd({ type: 'gather', units: workers.map(u => u.id), target: t.id }); marker(t.x, t.y); return; }
         if (!t.done && FACTIONS[st.players[G.human].faction].buildStyle === 'construct') { for (const u of workers) cmd({ type: 'resume', units: [u.id], target: t.id }); marker(t.x, t.y); return; }
         if (bd.onGeyser && !t.done) { feed(`${bd.name} isn't finished yet`, 'warn'); return; }
@@ -372,7 +410,18 @@ function applyMode(sx, sy, shift) {
     if (!pl.ok) { feed(pl.reason, 'warn'); return; }
     const cx = pl.tx + BUILDINGS[m.btype].size / 2, cy = pl.ty + BUILDINGS[m.btype].size / 2;
     const w = workers.sort((a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy))[0];
-    if (cmd({ type: 'build', units: [w.id], btype: m.btype, tx: pl.tx, ty: pl.ty })) { marker(cx, cy); if (!shift) G.mode = null; }
+    const bd = BUILDINGS[m.btype], me = G.state.players[G.human];
+    if (me.minerals >= bd.cost[0] && me.gas >= bd.cost[1]) {
+      if (cmd({ type: 'build', units: [w.id], btype: m.btype, tx: pl.tx, ty: pl.ty })) { marker(cx, cy); if (!shift) G.mode = null; }
+      return;
+    }
+    // can't afford it yet: queue it. The worker walks to the site now; income is held for it, and it goes up
+    // as soon as there's enough.
+    if (G.pending) feed(`Replaced the queued ${BUILDINGS[G.pending.btype].name}`, 'warn');
+    G.pending = { btype: m.btype, tx: pl.tx, ty: pl.ty, wid: w.id };
+    cmd({ type: 'move', units: [w.id], x: cx, y: cy + bd.size / 2 + 0.6 });
+    feed(`${bd.name} queued: it will be built when you have ${costStr(bd.cost)}. Esc cancels.`, '');
+    marker(cx, cy); G.mode = null;
     return;
   }
   const w = G.R.screenToWorld(sx, sy);
@@ -383,6 +432,12 @@ function applyMode(sx, sy, shift) {
     if (!ok) { feed('Click a mineral field, or your own finished gas building', 'warn'); return; }
     if (t.kind === 'building' && !t.done) { feed(`${BUILDINGS[t.type].name} isn't finished yet`, 'warn'); return; }
     cmd({ type: 'gather', units: units.filter(u => UNITS[u.type].worker).map(u => u.id), target: t.id }); marker(t.x, t.y);
+    if (!shift) G.mode = null;
+    return;
+  }
+  if (m.type === 'repair') {
+    if (!t || t.owner !== G.human || t.kind === 'resource') { feed('Click one of your damaged buildings' + (FACTIONS[G.state.players[G.human].faction].buildStyle === 'construct' ? ' or mechanical units' : ''), 'warn'); return; }
+    cmd({ type: 'repair', units: units.filter(u => UNITS[u.type].worker).map(u => u.id), target: t.id }); marker(t.x, t.y);
     if (!shift) G.mode = null;
     return;
   }
@@ -397,6 +452,7 @@ function buildUiState() {
   const ui = { selection: G.sel, player: G.human, hoverId: null, dragRect: null, placement: null, orderMarker: G.orderMarker };
   if (G.drag && (Math.abs(G.drag.x1 - G.drag.x0) > 4 || Math.abs(G.drag.y1 - G.drag.y0) > 4)) ui.dragRect = G.drag;
   if (G.mode && G.mode.type === 'build' && G.mouse.inside) ui.placement = placementAt(G.mouse.x, G.mouse.y, G.mode.btype);
+  ui.pending = G.pending;
   if (G.mouse.inside && !G.drag) { const e = G.R.entityAt(G.mouse.x, G.mouse.y, G.acc); ui.hoverId = e ? e.id : null; }
   canvas.classList.toggle('targeting', !!G.mode);
   return ui;
@@ -410,23 +466,24 @@ function cardButtons() {
   const pl = st.players[H];
   const units = selUnits(), blds = selBuildings();
   const out = [];
-  const affordable = c => pl.minerals >= c[0] && pl.gas >= c[1];
+  const held = G.pending ? BUILDINGS[G.pending.btype].cost : [0, 0];
+  const affordable = c => pl.minerals - held[0] >= c[0] && pl.gas - held[1] >= c[1];
   const reqMissing = t => ((UNITS[t] || BUILDINGS[t]).requires || []).filter(r => ![...st.ents.values()].some(e => e.kind === 'building' && e.owner === H && e.type === r && e.done));
   if (units.length) {
     out.push({ key: 'M', glyph: 'MOVE', name: 'Move', tip: 'Move to a point, ignoring enemies', act: () => { G.mode = { type: 'move' }; }, active: G.mode?.type === 'move' });
     out.push({ key: 'S', glyph: 'STOP', name: 'Stop', tip: 'Stop and stand ready', act: () => cmd({ type: 'stop', units: units.map(u => u.id) }) });
     out.push({ key: 'A', glyph: 'ATK', name: 'Attack', tip: 'Click a target, or ground to attack-move', act: () => { G.mode = { type: 'attack' }; }, active: G.mode?.type === 'attack' });
-    out.push({ key: 'H', glyph: 'HOLD', name: 'Hold position', tip: 'Stay put and fire at anything in range', act: () => cmd({ type: 'hold', units: units.map(u => u.id) }) });
+    if (!units.every(u => UNITS[u.type].worker)) out.push({ key: 'H', glyph: 'HOLD', name: 'Hold position', tip: 'Stay put and fire at anything in range', act: () => cmd({ type: 'hold', units: units.map(u => u.id) }) });
     if (units.some(u => UNITS[u.type].worker)) {
+      out.push({ key: 'R', glyph: 'REPAIR', name: 'Repair', tip: `Click a damaged building of yours${pl.faction === 'vanguard' ? ' or a Crawler/Hawk' : ''}. Restores it at its build speed for ${Math.round(REPAIR_COST * 100)}% of its cost. Right-click does the same. Several workers repair faster.`, act: () => { G.mode = { type: 'repair' }; }, active: G.mode?.type === 'repair' });
       out.push({ key: 'Q', glyph: 'GATHER', name: 'Gather', tip: 'Click a mineral field, or your finished gas building (refinery/extractor/assimilator). Same as right-click or Ctrl+click on it.', act: () => { G.mode = { type: 'gather' }; }, active: G.mode?.type === 'gather' });
       for (const bt of buildingsOf(pl.faction)) {
         const bd = BUILDINGS[bt], miss = reqMissing(bt);
         out.push({
-          key: bd.key, glyph: abbrev(bd.name), name: 'Build ' + bd.name, tag: 'build', cost: bd.cost, missing: miss, dis: miss.length > 0 || !affordable(bd.cost),
-          tip: buildingTip(bt), active: G.mode?.type === 'build' && G.mode.btype === bt,
+          key: bd.key, glyph: abbrev(bd.name), name: 'Build ' + bd.name, tag: 'build', cost: bd.cost, missing: miss, dis: miss.length > 0, short: !affordable(bd.cost),
+          tip: buildingTip(bt) + (affordable(bd.cost) ? '' : ' Not enough yet: place it anyway and it will be built as soon as you can afford it.'), active: G.mode?.type === 'build' && G.mode.btype === bt,
           act: () => {
             if (miss.length) return feed(`Requires ${miss.map(r => BUILDINGS[r].name).join(', ')}`, 'warn');
-            if (!affordable(bd.cost)) return feed(pl.minerals < bd.cost[0] ? 'Not enough minerals' : 'Not enough gas', 'warn');
             G.mode = { type: 'build', btype: bt };
           },
         });
@@ -442,6 +499,7 @@ function cardButtons() {
         key: ud.key, glyph: abbrev(ud.name), name: 'Train ' + ud.name + (ud.count > 1 ? ` ×${ud.count}` : ''), tag: 'train', cost: ud.cost, missing: miss, dis: miss.length > 0 || !affordable(ud.cost),
         tip: unitTip(ut),
         act: () => {
+          if (!affordable(ud.cost)) return feed(G.pending && pl.minerals >= ud.cost[0] && pl.gas >= ud.cost[1] ? `Minerals are held for your queued ${BUILDINGS[G.pending.btype].name}` : pl.minerals < ud.cost[0] ? 'Not enough minerals' : 'Not enough gas', 'warn');
           // queue on the least busy building of this type
           const b = same.slice().sort((a, c) => (a.queue.length + a.eggs.length - a.larva) - (c.queue.length + c.eggs.length - c.larva))[0];
           cmd({ type: 'train', building: b.id, utype: ut });
@@ -449,9 +507,26 @@ function cardButtons() {
       });
     }
     const b0 = blds[0];
+    if (bd.dome && b0.done) {
+      const pl = st.players[H], wait = Math.ceil((b0.rechargeUntil - st.tick) / TICK_RATE);
+      const C = COLONY_SHIELD;
+      out.push({
+        key: 'D', glyph: 'SHIELD', name: 'Raise colony shield', dis: !!pl.dome || wait > 0,
+        tip: pl.dome ? 'The shield is already up' : wait > 0 ? `Recharging: ready in ${wait} s` : `A dome over your main base (radius ${C.radius}) for ${C.duration} s. Enemies can't enter it or shoot through it; their fire hits the dome instead (${C.hp} strength). Your own units come and go and fire out freely. Recharges for ${C.recharge} s after it falls.`,
+        act: () => cmd({ type: 'shield', building: b0.id }),
+      });
+    }
     if (!b0.done || b0.queue.length || b0.eggs.length) out.push({ key: 'X', glyph: 'CANCEL', name: b0.done ? 'Cancel last' : 'Cancel construction', tip: b0.done ? 'Cancel the last unit in the queue (full refund)' : 'Cancel this building (75% refund)', act: () => cmd({ type: 'cancel', building: b0.id }), slot: 11 });
   }
   return out;
+}
+
+function weatherEffects(wd) {
+  const bits = [];
+  if (wd.sight) bits.push(`sight ${wd.sight}`);
+  if (wd.speed < 1) bits.push(`speed −${Math.round(100 - wd.speed * 100)}%`);
+  if (wd.airSpeed < 1) bits.push(`flyers −${Math.round(100 - wd.airSpeed * 100)}%`);
+  return bits.length ? ` (${bits.join(', ')})` : '';
 }
 
 function abbrev(name) {
@@ -469,17 +544,18 @@ function buildingTip(bt) {
   if (b.power) bits.push(`Powers buildings within ${b.power}`);
   if (b.onGeyser) bits.push('Build on a gas geyser');
   if (b.needsPower) bits.push('Needs pylon power');
+  if (b.damage) bits.push(`Defence: shoots ground and air units, damage ${b.damage}, range ${b.range}`);
   if (b.faction === 'swarm' && !b.base && !b.onGeyser) bits.push('Must be placed on creep');
   return bits.join('. ') + `. Build time ${b.time}s.`;
 }
 function unitTip(ut) {
   const u = UNITS[ut];
-  return `HP ${u.hp}${u.shield ? ` + ${u.shield} shields` : ''}${u.armor ? `, armour ${u.armor}` : ''}. Damage ${u.damage}${u.splash ? ' (splash)' : ''}, range ${u.range > 1 ? u.range : 'melee'}. Supply ${u.supply * (u.count || 1)}. Train time ${u.time}s.`;
+  return `${u.air ? 'Flying: crosses cliffs, sees up onto high ground. ' : ''}HP ${u.hp}${u.shield ? ` + ${u.shield} shields` : ''}${u.armor ? `, armour ${u.armor}` : ''}. Damage ${u.damage}${u.splash ? ' (splash)' : ''}, range ${u.range > 1 ? u.range : 'melee'}${u.air || u.antiAir ? ', hits air and ground' : ', ground only'}. Supply ${u.supply * (u.count || 1)}. Train time ${u.time}s.`;
 }
 
 function renderCard() {
   const btns = cardButtons();
-  const sig = btns.map(b => `${b.key}${b.glyph}${b.dis ? 1 : 0}${b.active ? 1 : 0}`).join('|');
+  const sig = btns.map(b => `${b.key}${b.glyph}${b.dis ? 1 : 0}${b.short ? 1 : 0}${b.active ? 1 : 0}`).join('|');
   G.cardButtons = btns;
   if (sig === G.cardSig) return;
   G.cardSig = sig;
@@ -490,7 +566,7 @@ function renderCard() {
   for (const b of slots) {
     if (!b) { const d = document.createElement('div'); d.className = 'empty'; card.appendChild(d); continue; }
     const el = document.createElement('button');
-    el.className = (b.dis ? 'dis ' : '') + (b.active ? 'active' : '');
+    el.className = (b.dis ? 'dis ' : '') + (b.short ? 'short ' : '') + (b.active ? 'active' : '');
     el.innerHTML = `${b.tag ? `<span class="tag ${b.tag}">${b.tag}</span>` : ''}<span class="key">${b.key}</span><span class="glyph">${b.glyph}</span>${b.cost ? `<span class="cost">${costStr(b.cost)}</span>` : ''}`;
     el.onclick = e => { e.stopPropagation(); b.act(); G.cardSig = null; };
     el.onmouseenter = () => showTip(el, b);
@@ -517,8 +593,16 @@ function updateHud() {
   $('rMin').textContent = pl ? Math.floor(pl.minerals) : '—';
   $('rGas').textContent = pl ? Math.floor(pl.gas) : '—';
   $('rSup').textContent = pl ? `${fmtSup(pl.supplyUsed)}/${pl.supplyCap}` : '—';
-  $('rSup').classList.toggle('blocked', !!pl && pl.supplyUsed >= pl.supplyCap && pl.supplyCap < MAX_SUPPLY);
+  $('rSup').title = pl ? `Supply used / provided. Ceiling ${pl.supplyMax}: each extra base you hold raises it by ${SUPPLY_PER_BASE}, up to ${MAP_SIZES[st.mapSize].supplyMax} on this map.` : '';
+  $('rSup').classList.toggle('blocked', !!pl && pl.supplyUsed >= pl.supplyCap && pl.supplyCap < pl.supplyMax);
+  // the ceiling, on maps where territory can raise it
+  $('rSupMax').textContent = pl && MAP_SIZES[st.mapSize].supplyMax > 100 ? `max ${pl.supplyMax}` : '';
   $('clock').textContent = fmtTime(st.tick / TICK_RATE);
+  const w = st.weather, wd = WEATHER[w.type], left = (w.until - st.tick) / TICK_RATE;
+  $('weatherInd').innerHTML = `<b>${wd.name}</b>${weatherEffects(wd)} · ${left < 30 ? `<span style="color:#e8c86a">${WEATHER[w.next].name} in ${fmtTime(left)}</span>` : `then ${WEATHER[w.next].name}`}`;
+  const dm = pl && pl.dome;
+  $('domeInd').classList.toggle('hidden', !dm);
+  if (dm) $('domeInd').textContent = `Shield ${fmtTime((dm.until - st.tick) / TICK_RATE)} · ${Math.ceil(100 * dm.hp / dm.maxHp)}%`;
   renderCard();
   renderInfo();
 }
@@ -553,7 +637,7 @@ function renderInfo() {
     const stats = [`HP <b>${Math.ceil(e.hp)}/${e.maxHp}</b>`];
     if (e.maxShield) stats.push(`Shields <b>${Math.ceil(e.shield)}/${e.maxShield}</b>`);
     if (e.armor) stats.push(`Armour <b>${e.armor}</b>`);
-    if (e.kind === 'unit') { stats.push(`Damage <b>${d.damage}${d.splash ? ' splash' : ''}</b>`); stats.push(`Range <b>${d.range > 1 ? d.range : 'melee'}</b>`); stats.push(`Sight <b>${d.sight}</b>`); }
+    if (e.kind === 'unit' || d.damage) { stats.push(`Damage <b>${d.damage}${d.splash ? ' splash' : ''}</b>`); stats.push(`Range <b>${d.range > 1 ? d.range : 'melee'}</b>`); stats.push(`Sight <b>${d.sight}</b>`); }
     html = `<div class="iTitle">${d.name} ${ownerName}</div><div class="iStats">${stats.map(s => `<span>${s}</span>`).join('')}</div>`;
     const mineOrSpectate = e.owner === G.R.viewer || G.R.viewer < 0;
     if (mineOrSpectate) html += `<div class="iStatus">${statusText(e)}</div>`;
@@ -579,6 +663,10 @@ function statusText(e) {
     if (d.larva) bits.push(`Larvae <b>${e.larva}/3</b>${e.eggs.length ? ` · ${e.eggs.length} egg${e.eggs.length > 1 ? 's' : ''}` : ''}`);
     if (d.supply) bits.push(`Provides ${d.supply} supply`);
     if (e.queue.length) bits.push(`Training ${UNITS[e.queue[0]].name}`);
+    if (d.dome) {
+      const dm = st.players[e.owner].dome, wait = Math.ceil((e.rechargeUntil - st.tick) / TICK_RATE);
+      bits.push(dm ? `<span style="color:#7fd3ff">Shield up: ${fmtTime((dm.until - st.tick) / TICK_RATE)} left, strength ${Math.ceil(dm.hp)}/${dm.maxHp}</span>` : wait > 0 ? `Recharging: ${fmtTime(wait)}` : '<span style="color:#7fd3ff">Shield ready (D)</span>');
+    }
     return bits.join(' · ') || 'Ready';
   }
   const o = e.order;
@@ -594,6 +682,7 @@ function statusText(e) {
       const what = r && r.kind === 'building' ? 'gas' : 'minerals';
       return ({ toRes: `Heading to ${what}`, waiting: 'Waiting for a free patch', mining: `Harvesting ${what}`, toDrop: 'Returning cargo' })[o.phase] + carry;
     }
+    case 'repair': { const t = st.ents.get(o.target); return t ? `Repairing ${(UNITS[t.type] || BUILDINGS[t.type]).name}` : 'Repairing'; }
     case 'build': return o.phase === 'toSite' ? `Going to build ${BUILDINGS[o.btype].name}` : `Constructing ${BUILDINGS[o.btype].name}`;
   }
   return '';
@@ -657,7 +746,7 @@ canvas.addEventListener('wheel', e => {
   else { G.R.cam.x += e.deltaX / G.R.zoom; G.R.cam.y += e.deltaY / G.R.zoom; G.R.clampCam(); }
 }, { passive: false });
 
-function miniToWorld(e) { const p = localPos(e, mini); const N = G.state.N; return { x: p.x / mini.clientWidth * N, y: p.y / mini.clientHeight * N }; }
+function miniToWorld(e) { const p = localPos(e, mini); return G.R.miniToWorld(p.x, p.y); }
 let miniDrag = false;
 mini.addEventListener('mousedown', e => {
   if (!G.state) return;
@@ -699,7 +788,7 @@ window.addEventListener('keydown', e => {
   const k = e.key;
   if (k.startsWith('Arrow')) { G.keys.add(k); e.preventDefault(); return; }
   if (k === ' ') { e.preventDefault(); togglePause(); return; }
-  if (k === 'Escape') { G.mode = null; $('help').classList.add('hidden'); G.cardSig = null; return; }
+  if (k === 'Escape') { if (!G.mode && G.pending) { feed(`Queued ${BUILDINGS[G.pending.btype].name} cancelled`, 'warn'); G.pending = null; } G.mode = null; $('help').classList.add('hidden'); G.cardSig = null; return; }
   if (k === 'F1' || k === '?') { e.preventDefault(); $('help').classList.toggle('hidden'); return; }
   if (k === '-' || k === '_') { setSpeed(G.speedI - 1); return; }
   if (k === '=' || k === '+') { setSpeed(G.speedI + 1); return; }
@@ -708,7 +797,7 @@ window.addEventListener('keydown', e => {
   if (k === 'Backspace') {
     e.preventDefault();
     const H = G.human;
-    if (H >= 0) { const b = [...G.state.ents.values()].find(x => x.kind === 'building' && x.owner === H && BUILDINGS[x.type].base); const s = b || G.state.players[H].start; G.R.centerOn(s.x, s.y + 2); }
+    if (H >= 0) { const b = [...G.state.ents.values()].find(x => x.kind === 'building' && x.owner === H && BUILDINGS[x.type].base); const s = b || G.state.players[H].start; G.R.centerOn(s.x + 1.5, s.y + 1.5); }
     return;
   }
   if (k === 'Tab') { e.preventDefault(); if (G.lastAlert) G.R.centerOn(G.lastAlert.x, G.lastAlert.y); return; }

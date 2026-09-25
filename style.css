@@ -36,7 +36,13 @@ button, select, input { font: inherit; color: inherit; }
 .ico.gas { background: var(--gas); border-radius: 50%; }
 .ico.sup { background: #e8c86a; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
 #rSup.blocked { color: var(--bad); }
+#mid { display: flex; align-items: center; gap: 12px; }
+#weatherInd { font-size: 12px; color: var(--dim); white-space: nowrap; }
+#weatherInd b { color: #d8e4f0; font-weight: 600; }
 #clock { font-size: 16px; color: var(--dim); font-variant-numeric: tabular-nums; }
+#rSupMax { font-size: 11px; color: var(--dim); margin-left: 4px; }
+#version { font-size: 11px; color: var(--dim); margin: -6px 0 10px; }
+#domeInd { position: absolute; left: 50%; top: 40px; transform: translateX(-50%); font-size: 13px; color: #9fe0ff; border: 1px solid #3a7fae; background: #0d2233cc; border-radius: 4px; padding: 2px 8px; font-variant-numeric: tabular-nums; box-shadow: 0 0 10px #4fb4ff44; }
 .ctl { display: flex; gap: 6px; }
 .ctl button, .ctl select {
   background: var(--panel2); border: 1px solid var(--line2); border-radius: 4px; padding: 3px 10px; font-size: 13px; cursor: pointer;
@@ -77,6 +83,7 @@ button, select, input { font: inherit; color: inherit; }
 #card button:hover { border-color: var(--accent); background: linear-gradient(#233140, #151d27); }
 #card button.active { border-color: var(--good); box-shadow: inset 0 0 8px #6dff8a55; }
 #card button.dis { opacity: .38; }
+#card button.short .cost { color: #e88; }
 #card .empty { border: 1px dashed #1b232c; border-radius: 4px; }
 
 /* info panel */

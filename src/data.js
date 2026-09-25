@@ -1,9 +1,21 @@
 // Static game data: factions, units, buildings. Shared by the simulation, the UI and the bots.
 
+// Shown on the start menu, so you can tell which version the browser has loaded. Bump it with each change.
+export const VERSION = '25 Sep 2026 · build queue';
+
 export const TICK_RATE = 16;          // simulation ticks per game second
 export const DT = 1 / TICK_RATE;
-export const MAX_SUPPLY = 100;
-export const MAP_SIZE = 112;          // tiles per side ("medium")
+export const MAX_SUPPLY = 100;          // supply ceiling with one base
+// Territory raises the ceiling: each extra finished base (at a separate site) adds SUPPLY_PER_BASE,
+// up to the map size's supplyMax.
+export const MAP_SIZE = 112;          // tiles per side ("medium"), the default
+// Bigger maps have more possible start locations than players, so you have to search for the enemy.
+export const MAP_SIZES = {
+  medium: { name: 'Medium', size: 112, starts: 3, supplyMax: 100 },
+  large:  { name: 'Large',  size: 176, starts: 5, supplyMax: 150 },
+  huge:   { name: 'Huge',   size: 240, starts: 6, supplyMax: 200 },
+};
+export const SUPPLY_PER_BASE = 25;
 
 export const PLAYER_COLORS = ['#4f8cff', '#ff5a4f', '#3ecf6e'];
 export const PLAYER_NAMES = ['Blue', 'Red', 'Green'];
@@ -31,18 +43,23 @@ export const FACTIONS = {
 
 // range: distance between edges, in tiles. speed: tiles/second. cooldown: seconds.
 // cost: [minerals, gas]. time: seconds. count: units produced per order.
+// air: flies over terrain and sees up cliffs. antiAir: can shoot flying units (flyers always can).
+// mech: an engineer can repair it.
 export const UNITS = {
   engineer: { faction: 'vanguard', name: 'Engineer', worker: true, hp: 60, armor: 0, speed: 2.8, sight: 7, range: 0.3, damage: 5, cooldown: 1.1, cost: [50, 0], time: 12, supply: 1, radius: 0.32, key: 'E' },
-  trooper:  { faction: 'vanguard', name: 'Trooper', hp: 45, armor: 0, speed: 2.6, sight: 8, range: 4, damage: 6, cooldown: 0.6, cost: [50, 0], time: 18, supply: 1, radius: 0.3, key: 'T', ranged: true },
-  crawler:  { faction: 'vanguard', name: 'Crawler', hp: 160, armor: 1, speed: 2.2, sight: 10, range: 6.5, damage: 28, cooldown: 2.0, splash: 0.9, cost: [150, 75], time: 30, supply: 3, radius: 0.55, key: 'C', ranged: true, requires: ['factory'] },
+  trooper:  { faction: 'vanguard', name: 'Trooper', hp: 45, armor: 0, speed: 2.6, sight: 8, range: 4, damage: 6, cooldown: 0.6, cost: [50, 0], time: 18, supply: 1, radius: 0.3, key: 'T', ranged: true, antiAir: true },
+  crawler:  { faction: 'vanguard', name: 'Crawler', hp: 160, armor: 1, speed: 2.2, sight: 10, range: 6.5, damage: 28, cooldown: 2.0, splash: 0.9, cost: [150, 75], time: 30, supply: 3, radius: 0.55, key: 'C', ranged: true, mech: true, requires: ['factory'] },
+  hawk:     { faction: 'vanguard', name: 'Hawk', hp: 130, armor: 1, speed: 3.8, sight: 10, range: 4, damage: 10, cooldown: 1.0, cost: [150, 100], time: 32, supply: 2, radius: 0.5, key: 'H', ranged: true, air: true, antiAir: true, mech: true, requires: ['factory'] },
 
   drone:    { faction: 'swarm', name: 'Drone', worker: true, hp: 40, armor: 0, speed: 2.9, sight: 7, range: 0.3, damage: 5, cooldown: 1.1, cost: [50, 0], time: 12, supply: 1, radius: 0.32, key: 'D', regen: 0.4 },
   biter:    { faction: 'swarm', name: 'Biter', hp: 35, armor: 0, speed: 4.2, sight: 7, range: 0.3, damage: 5, cooldown: 0.55, cost: [50, 0], time: 17, supply: 0.5, count: 2, radius: 0.27, key: 'B', regen: 0.4, requires: ['pit'] },
-  spitter:  { faction: 'swarm', name: 'Spitter', hp: 85, armor: 0, speed: 2.9, sight: 9, range: 4.5, damage: 11, cooldown: 0.85, cost: [75, 25], time: 22, supply: 2, radius: 0.4, key: 'S', regen: 0.4, ranged: true, requires: ['den'] },
+  spitter:  { faction: 'swarm', name: 'Spitter', hp: 85, armor: 0, speed: 2.9, sight: 9, range: 4.5, damage: 11, cooldown: 0.85, cost: [75, 25], time: 22, supply: 2, radius: 0.4, key: 'S', regen: 0.4, ranged: true, antiAir: true, requires: ['den'] },
+  stinger:  { faction: 'swarm', name: 'Stinger', hp: 110, armor: 0, speed: 4.3, sight: 10, range: 3, damage: 9, cooldown: 0.9, cost: [100, 100], time: 28, supply: 2, radius: 0.45, key: 'T', regen: 0.4, ranged: true, air: true, antiAir: true, requires: ['den'] },
 
   acolyte:  { faction: 'ascendant', name: 'Acolyte', worker: true, hp: 20, shield: 20, armor: 0, speed: 2.8, sight: 7, range: 0.3, damage: 5, cooldown: 1.1, cost: [50, 0], time: 12, supply: 1, radius: 0.32, key: 'E' },
   warden:   { faction: 'ascendant', name: 'Warden', hp: 100, shield: 60, armor: 1, speed: 2.6, sight: 8, range: 0.3, damage: 16, cooldown: 1.2, cost: [100, 0], time: 28, supply: 2, radius: 0.4, key: 'W' },
-  lancer:   { faction: 'ascendant', name: 'Lancer', hp: 80, shield: 80, armor: 1, speed: 3.0, sight: 10, range: 6, damage: 13, cooldown: 1.35, cost: [125, 50], time: 30, supply: 2, radius: 0.42, key: 'L', ranged: true, requires: ['core'] },
+  lancer:   { faction: 'ascendant', name: 'Lancer', hp: 80, shield: 80, armor: 1, speed: 3.0, sight: 10, range: 6, damage: 13, cooldown: 1.35, cost: [125, 50], time: 30, supply: 2, radius: 0.42, key: 'L', ranged: true, antiAir: true, requires: ['core'] },
+  seraph:   { faction: 'ascendant', name: 'Seraph', hp: 90, shield: 80, armor: 0, speed: 3.6, sight: 11, range: 4.5, damage: 12, cooldown: 1.3, cost: [150, 100], time: 34, supply: 2, radius: 0.48, key: 'S', ranged: true, air: true, antiAir: true, requires: ['core'] },
 };
 
 // size: footprint in tiles (square). supply: supply provided. creep/power: radius in tiles.
@@ -50,21 +67,40 @@ export const BUILDINGS = {
   hub:       { faction: 'vanguard', name: 'Command Hub', size: 3, hp: 1500, armor: 1, cost: [400, 0], time: 70, supply: 10, produces: ['engineer'], dropoff: true, sight: 10, key: 'C', base: true },
   depot:     { faction: 'vanguard', name: 'Supply Depot', size: 2, hp: 400, armor: 1, cost: [100, 0], time: 20, supply: 8, sight: 7, key: 'D' },
   barracks:  { faction: 'vanguard', name: 'Barracks', size: 3, hp: 1000, armor: 1, cost: [150, 0], time: 40, produces: ['trooper'], sight: 8, key: 'B' },
-  factory:   { faction: 'vanguard', name: 'Factory', size: 3, hp: 1250, armor: 1, cost: [200, 100], time: 50, produces: ['crawler'], sight: 8, key: 'F', requires: ['barracks'] },
-  refinery:  { faction: 'vanguard', name: 'Refinery', size: 2, hp: 750, armor: 1, cost: [75, 0], time: 25, onGeyser: true, sight: 7, key: 'R' },
+  factory:   { faction: 'vanguard', name: 'Factory', size: 3, hp: 1250, armor: 1, cost: [200, 100], time: 50, produces: ['crawler', 'hawk'], sight: 8, key: 'F', requires: ['barracks'] },
+  bulwark:   { faction: 'vanguard', name: 'Bulwark Generator', size: 2, hp: 900, armor: 2, cost: [300, 200], time: 60, sight: 8, key: 'Z', requires: ['hub', 'depot', 'barracks', 'factory', 'refinery', 'turret'], dome: true },
+  turret:    { faction: 'vanguard', name: 'Sentry Turret', size: 2, hp: 400, armor: 1, cost: [100, 0], time: 25, sight: 9, key: 'T', requires: ['barracks'], damage: 12, range: 6.5, cooldown: 1.0, antiAir: true, ranged: true },
+  refinery:  { faction: 'vanguard', name: 'Refinery', size: 2, hp: 750, armor: 1, cost: [75, 0], time: 25, onGeyser: true, sight: 7, key: 'E' },
 
-  hive:      { faction: 'swarm', name: 'Hive', size: 3, hp: 1500, armor: 1, cost: [300, 0], time: 70, supply: 10, produces: ['drone', 'biter', 'spitter'], dropoff: true, creep: 9, larva: true, sight: 10, key: 'V', base: true, regen: 0.4 },
+  hive:      { faction: 'swarm', name: 'Hive', size: 3, hp: 1500, armor: 1, cost: [300, 0], time: 70, supply: 10, produces: ['drone', 'biter', 'spitter', 'stinger'], dropoff: true, creep: 9, larva: true, sight: 10, key: 'V', base: true, regen: 0.4 },
   pod:       { faction: 'swarm', name: 'Brood Pod', size: 2, hp: 350, armor: 1, cost: [100, 0], time: 20, supply: 8, creep: 5, sight: 7, key: 'O', regen: 0.4 },
   pit:       { faction: 'swarm', name: 'Spawning Pit', size: 2, hp: 750, armor: 1, cost: [200, 0], time: 40, sight: 7, key: 'P', regen: 0.4 },
   den:       { faction: 'swarm', name: 'Spitter Den', size: 2, hp: 850, armor: 1, cost: [100, 50], time: 30, sight: 7, key: 'D', requires: ['pit'], regen: 0.4 },
+  heart:     { faction: 'swarm', name: 'Carapace Heart', size: 2, hp: 900, armor: 2, cost: [300, 200], time: 60, sight: 8, key: 'Z', requires: ['hive', 'pod', 'pit', 'den', 'extractor', 'thorn'], regen: 0.4, dome: true },
+  thorn:     { faction: 'swarm', name: 'Thorn Mound', size: 2, hp: 350, armor: 1, cost: [100, 0], time: 25, sight: 9, key: 'T', requires: ['pit'], regen: 0.4, damage: 14, range: 5.5, cooldown: 1.1, antiAir: true, ranged: true },
   extractor: { faction: 'swarm', name: 'Extractor', size: 2, hp: 750, armor: 1, cost: [25, 0], time: 20, onGeyser: true, sight: 7, key: 'E', regen: 0.4 },
 
   nexus:     { faction: 'ascendant', name: 'Nexus', size: 3, hp: 1000, shield: 1000, armor: 1, cost: [400, 0], time: 70, supply: 10, produces: ['acolyte'], dropoff: true, sight: 10, key: 'N', base: true },
   pylon:     { faction: 'ascendant', name: 'Pylon', size: 2, hp: 200, shield: 200, armor: 1, cost: [100, 0], time: 18, supply: 8, power: 6.5, sight: 7, key: 'P' },
-  gateway:   { faction: 'ascendant', name: 'Gateway', size: 3, hp: 500, shield: 500, armor: 1, cost: [150, 0], time: 45, produces: ['warden', 'lancer'], needsPower: true, sight: 8, key: 'G' },
+  gateway:   { faction: 'ascendant', name: 'Gateway', size: 3, hp: 500, shield: 500, armor: 1, cost: [150, 0], time: 45, produces: ['warden', 'lancer', 'seraph'], needsPower: true, sight: 8, key: 'G' },
   core:      { faction: 'ascendant', name: 'Core', size: 2, hp: 550, shield: 550, armor: 1, cost: [150, 0], time: 40, needsPower: true, sight: 7, key: 'Y', requires: ['gateway'] },
+  sanctum:   { faction: 'ascendant', name: 'Sanctum Projector', size: 2, hp: 450, shield: 450, armor: 2, cost: [300, 200], time: 60, sight: 8, key: 'Z', requires: ['nexus', 'pylon', 'gateway', 'core', 'assimilator', 'spire'], dome: true },
+  spire:     { faction: 'ascendant', name: 'Aegis Spire', size: 2, hp: 250, shield: 250, armor: 1, cost: [125, 0], time: 30, needsPower: true, sight: 9, key: 'T', requires: ['gateway'], damage: 14, range: 6.5, cooldown: 1.2, antiAir: true, ranged: true },
   assimilator: { faction: 'ascendant', name: 'Assimilator', size: 2, hp: 450, shield: 450, armor: 1, cost: [75, 0], time: 25, onGeyser: true, sight: 7, key: 'E' },
 };
+
+// Terrain and weather. Wading through a ford multiplies ground speed by FORD_SPEED.
+export const FORD_SPEED = 0.55;
+// Weather rolls across the whole map. speed/airSpeed multiply movement; sight is added to sight ranges
+// (never below 3). weight: how often it comes up; the first few minutes are always clear.
+export const WEATHER = {
+  clear: { name: 'Clear',      speed: 1,    airSpeed: 1,   sight: 0,  weight: 45, dur: [90, 180] },
+  rain:  { name: 'Rain',       speed: 0.85, airSpeed: 1,   sight: -1, weight: 20, dur: [60, 120] },
+  fog:   { name: 'Fog',        speed: 1,    airSpeed: 1,   sight: -4, weight: 15, dur: [50, 100] },
+  dust:  { name: 'Dust storm', speed: 0.8,  airSpeed: 0.6, sight: -3, weight: 12, dur: [40, 90] },
+  snow:  { name: 'Snow',       speed: 0.7,  airSpeed: 0.85, sight: -2, weight: 8, dur: [60, 120] },
+};
+export const WEATHER_CALM_START = 180; // seconds of clear weather at the start of a game
 
 export const MINERAL_AMOUNT = 1500;
 export const GEYSER_AMOUNT = 2500;
@@ -73,8 +109,26 @@ export const GAS_TIME = 1.5, GAS_AMOUNT = 4;
 export const LARVA_TIME = 11, LARVA_MAX = 3;
 export const SHIELD_REGEN = 2, SHIELD_DELAY = 7;
 export const QUEUE_MAX = 5;
+// Repair: a worker restores a building (or a mechanical unit) at the rate it was built, for this share of its cost.
+export const REPAIR_COST = 0.3;
+// Colony shield (one generator per player): a dome over the main base that enemies can neither enter
+// nor shoot through. Their fire hits the dome instead, until its strength is gone or time runs out.
+export const COLONY_SHIELD = {
+  radius: 12,      // dome radius in tiles, centred on the player's start location
+  placeWithin: 10, // the generator must be built this close to the start location
+  duration: 150,   // seconds the dome lasts if it isn't shot down
+  hp: 6000,        // damage it absorbs before collapsing
+  armor: 1,        // subtracted from every hit on the dome
+  recharge: 150,   // seconds after the dome goes down before it can be raised again
+};
 
 export function def(type) { return UNITS[type] || BUILDINGS[type]; }
+
+// Can a unit or tower of this type shoot at entity e?
+export function canHit(d, e) {
+  if (!d.damage) return false;
+  return e.kind === 'unit' && UNITS[e.type].air ? !!(d.antiAir || d.air) : true;
+}
 
 export function buildingsOf(faction) {
   return Object.keys(BUILDINGS).filter(k => BUILDINGS[k].faction === faction);
