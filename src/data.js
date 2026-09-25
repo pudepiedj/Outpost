@@ -1,5 +1,8 @@
 // Static game data: factions, units, buildings. Shared by the simulation, the UI and the bots.
 
+// Shown on the start menu, so you can tell which version the browser has loaded. Bump it with each change.
+export const VERSION = '25 Sep 2026 · build queue';
+
 export const TICK_RATE = 16;          // simulation ticks per game second
 export const DT = 1 / TICK_RATE;
 export const MAX_SUPPLY = 100;          // supply ceiling with one base

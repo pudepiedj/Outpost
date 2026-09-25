@@ -29,3 +29,5 @@ No build step, no dependencies, no package install. See README.md for gameplay, 
 - Match the existing dense style: short helpers, few comments, no frameworks, no TypeScript.
 - Keep the game playable on a Mac with Safari and Chrome; the owner runs it locally via `Outpost.command`.
 - Develop on the session's feature branch; the owner pulls it locally to play-test.
+- Bump `VERSION` in `src/data.js` with each pushed change: the owner checks it on the start menu to confirm
+  the browser has loaded the new files (a stale browser cache has caused confusion before).

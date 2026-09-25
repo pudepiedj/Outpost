@@ -1,7 +1,7 @@
 // Browser front end: menu, game loop, human input, HUD, bot hosting.
 
 import { createGame, step, issue, observe, publicMap, placementCtx } from './sim.js';
-import { TICK_RATE, UNITS, BUILDINGS, FACTIONS, PLAYER_COLORS, PLAYER_NAMES, REPAIR_COST, COLONY_SHIELD, MAP_SIZES, SUPPLY_PER_BASE, WEATHER, buildingsOf } from './data.js';
+import { TICK_RATE, UNITS, BUILDINGS, FACTIONS, PLAYER_COLORS, PLAYER_NAMES, REPAIR_COST, COLONY_SHIELD, MAP_SIZES, SUPPLY_PER_BASE, VERSION, WEATHER, buildingsOf } from './data.js';
 import { checkPlacement } from './rules.js';
 import { createRenderer } from './render.js';
 import { BOTS } from './bots/index.js';
@@ -41,6 +41,7 @@ function buildMenu() {
   }
   $('seed').value = prefs?.seed || 1 + Math.floor(Math.random() * 99999);
   $('mapSize').innerHTML = Object.entries(MAP_SIZES).map(([k, m]) => `<option value="${k}"${k === (prefs?.mapSize || 'medium') ? ' selected' : ''}>${m.name} (${m.size}×${m.size}, ${m.starts} start locations)</option>`).join('');
+  $('version').textContent = `Version: ${VERSION}`;
   $('factionInfo').innerHTML = Object.values(FACTIONS).map(f => `<div><b>${f.name}</b>${f.blurb}</div>`).join('');
   for (const el of document.querySelectorAll('.helpBody')) el.innerHTML = HELP.map(([k, v]) => `<kbd>${k}</kbd><span>${v}</span>`).join('');
 }
