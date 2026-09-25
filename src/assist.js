@@ -15,7 +15,7 @@ export function createAssist({ player, faction, map }) {
   const gasStaffed = new Set();
   const spotTries = new Map();
   const dronesPending = []; // Swarm eggs don't reveal their type, so remember drones we ordered
-  let lastSupplyTry = -1e9;
+  let lastSupplyTry = -1e9, noSpotUntil = 0;
   const d2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
   const assist = {
@@ -53,7 +53,8 @@ export function createAssist({ player, faction, map }) {
         if (need && !afford(sd.cost)) spend(sd.cost); // save up: don't spend the money on workers meanwhile
         else if (need) {
           const home = bases[0];
-          const spot = findBuildSpot(obs, map, F.supply, home, key => (spotTries.get(key) || 0) >= 2);
+          const spot = obs.tick < noSpotUntil ? null : findBuildSpot(obs, map, F.supply, home, key => (spotTries.get(key) || 0) >= 2);
+          if (!spot) noSpotUntil = obs.tick + 32;
           if (spot) {
             const site = { x: spot.tx + sd.size / 2, y: spot.ty + sd.size / 2 };
             const pool = workers.filter(w => w.order.type === 'gather' && !w.hidden);

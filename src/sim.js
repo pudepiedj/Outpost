@@ -155,11 +155,14 @@ function freeSpotNear(state, near, towards) {
   const N = state.N;
   const s = near.size || 1, tx0 = near.tx ?? Math.floor(near.x), ty0 = near.ty ?? Math.floor(near.y);
   const tgt = towards || { x: near.x, y: near.y + s };
+  // only ground connected to where the building (or unit) stands: never a walled-off pocket beside it
+  const home = state.region && tx0 >= 0 && ty0 >= 0 && tx0 < N && ty0 < N ? state.region[ty0 * N + tx0] : 0;
   for (let r = 1; r < 12; r++) {
     let best = null, bestD = Infinity;
     for (let y = ty0 - r; y < ty0 + s + r; y++) for (let x = tx0 - r; x < tx0 + s + r; x++) {
       if (x > tx0 - r && x < tx0 + s + r - 1 && y > ty0 - r && y < ty0 + s + r - 1) continue;
       if (x < 0 || y < 0 || x >= N || y >= N || !state.walk[y * N + x]) continue;
+      if (home && state.region[y * N + x] !== home && r < 6) continue;
       const d = Math.hypot(x + 0.5 - tgt.x, y + 0.5 - tgt.y);
       if (d < bestD) { bestD = d; best = [x, y]; }
     }

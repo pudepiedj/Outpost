@@ -5,9 +5,9 @@
 //   export function createBot({ player, faction, map, style }) -> { onTick(obs) -> command[] }
 // onTick is called about four times per game second. See README.md for the obs/command formats.
 
-import { UNITS, BUILDINGS, FACTIONS, MAX_SUPPLY } from '../data.js';
+import { UNITS, BUILDINGS, FACTIONS, MAX_SUPPLY, MINERAL_AMOUNT } from '../data.js';
 import { checkPlacement } from '../rules.js';
-import { findBuildSpot, knownBlocked, placementCtxFromObs } from './placement.js';
+import { findBuildSpot, knownBlocked, placementCtxFromObs, reachable } from './placement.js';
 
 export const STYLES = {
   balanced: { label: 'Balanced', workers: 18, gasAt: 12, firstWave: 12, waveGrowth: 4, scoutAt: 9, expandAt: 36 },
@@ -45,6 +45,15 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
   let scoutId = 0, scoutDone = false, scoutQueue = [];
   let attacking = false, wave = S.firstWave, target = null;
   let expander = 0, restUntil = 0;
+  // What the bot has learned about every base site: when it last looked, how many minerals are left there
+  // (remembered per mineral field), and whether an enemy has built there.
+  const siteInfo = map.bases.map(b => ({ x: b.x, y: b.y, lastSeen: -1e9, minerals: null, enemy: false }));
+  const resMem = new Map(); // mineral field id -> last seen amount
+  let surveyorId = 0, survey = [], nextSurvey = 0;
+  const noSpotUntil = new Map(); // building type -> tick: after a failed site search, wait before searching again
+  const huntTargets = []; // one per search party while hunting for an enemy we can't see
+  const orderedAt = new Map(), restWorker = new Map(); // workers that go straight back to idle are left alone a while
+  const maxMining = N >= 220 ? 5 : N >= 160 ? 4 : 3; // mining bases worth running at once, by map size
   const CELL = 8, CW = Math.ceil(N / CELL), seenAt = new Int32Array(CW * CW).fill(-1e6); // when each 8x8 cell was last in sight
 
   const d2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -59,8 +68,9 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
       }
       const units = mine.filter(e => e.kind === 'unit');
       const blds = mine.filter(e => e.kind === 'building');
-      const workers = units.filter(u => UNITS[u.type].worker && u.id !== scoutId);
-      const army = units.filter(u => !UNITS[u.type].worker);
+      const workers = units.filter(u => UNITS[u.type].worker && u.id !== scoutId && u.id !== surveyorId);
+      const army = units.filter(u => !UNITS[u.type].worker && u.id !== surveyorId);
+      updateSites();
       const bases = blds.filter(b => BUILDINGS[b.type].base).sort((a, b) => a.id - b.id);
       if (!home) {
         home = obs.start;
@@ -93,12 +103,14 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
 
       for (const w of workers) {
         if (w.order.type !== 'idle') continue;
+        if ((restWorker.get(w.id) || 0) > obs.tick) continue;
+        if (obs.tick - (orderedAt.get(w.id) ?? -1e9) < 32) { restWorker.set(w.id, obs.tick + 16 * 30); continue; } // stuck somewhere: back off
         let best = null, bestScore = Infinity;
         for (const r of mineralsNearBases) {
           const sc = (load.get(r.id) || 0) * 6 + d2(r, w) * 0.1;
           if (sc < bestScore) { bestScore = sc; best = r; }
         }
-        if (best) { cmds.push({ type: 'gather', units: [w.id], target: best.id }); load.set(best.id, (load.get(best.id) || 0) + 1); }
+        if (best) { cmds.push({ type: 'gather', units: [w.id], target: best.id }); load.set(best.id, (load.get(best.id) || 0) + 1); orderedAt.set(w.id, obs.tick); }
       }
       if (workers.length >= S.gasAt) {
         for (const g of gasBlds) {
@@ -134,17 +146,19 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
         break;
       }
       // expansions
-      const wantBases = 1 + (obs.supplyUsed >= S.expandAt ? 1 : 0) + (obs.supplyUsed >= S.expandAt + 30 ? 1 : 0) +
-        bases.filter(b => b.done && !minerals_near(b)).length;
-      const baseSites = [];
-      for (const b of bases) if (!baseSites.some(x => d2(x, b) < 8)) baseSites.push(b);
-      for (const w of units) if (w.order.type === 'build' && !w.order.bid && w.order.btype === F.base) {
-        const p = { x: w.order.tx + 1.5, y: w.order.ty + 1.5 };
-        if (!baseSites.some(x => d2(x, p) < 8)) baseSites.push(p);
-      }
-      if (baseSites.length < wantBases && !building) expand();
+      // Mining bases: expand on a timetable (more on big maps), and always before the local fields run dry.
+      const miningBases = [];
+      for (const b of bases) if (!miningBases.some(x => d2(x, b) < 8) && fieldsNear(b) > 0) miningBases.push(b);
+      const pendingBase = units.some(w => w.order.type === 'build' && !w.order.bid && w.order.btype === F.base) || bases.some(b => !b.done);
+      const localLeft = miningBases.reduce((n, b) => n + fieldsNear(b), 0);
+      let wantMining = 1 + (obs.supplyUsed >= S.expandAt ? 1 : 0) + (obs.supplyUsed >= S.expandAt + 25 ? 1 : 0) + (obs.supplyUsed >= S.expandAt + 45 ? 1 : 0) + (obs.supplyUsed >= S.expandAt + 60 ? 1 : 0);
+      if (localLeft < 3000 * Math.max(1, miningBases.length)) wantMining = Math.max(wantMining, miningBases.length + 1); // running low: next base now
+      wantMining = Math.min(wantMining, maxMining + (localLeft < 3000 ? 1 : 0));
+      const expanding = miningBases.length < wantMining && !pendingBase;
+      if (expanding && !building && (threats.length === 0 || minerals > 600)) expand();
+      const saving = expanding && !threats.length ? BUILDINGS[F.base].cost[0] : 0; // hold money back for the new base
       // spare money: more production
-      if (minerals > 450 && !building && producers < (S.slow ? 1 : 6)) {
+      if (minerals - saving > 450 && !building && producers < (S.slow ? 1 : 6)) {
         const extra = faction === 'swarm' ? 'hive' : faction === 'vanguard' ? (doneOf('factory') && producers % 3 === 2 ? 'factory' : 'barracks') : 'gateway';
         if (reqOk(extra)) tryBuild(extra);
       }
@@ -156,7 +170,7 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
           cmds.push({ type: 'train', building: b.id, utype: F.worker }); spend(UNITS[F.worker].cost); supplyFree -= 1;
         }
       }
-      const nextStepCost = nextBuildCost();
+      const nextStepCost = nextBuildCost() + saving;
       for (const b of blds) {
         if (!b.done) continue;
         const bd = BUILDINGS[b.type];
@@ -190,7 +204,9 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
       }
 
       repairStep();
+      rebalance();
       scoutStep();
+      surveyStep();
       fight();
       return cmds;
 
@@ -239,7 +255,10 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
       }
 
       function findSpot(bt) {
-        return findBuildSpot(obs, map, bt, home, key => (spotTries.get(key) || 0) >= 2);
+        if ((noSpotUntil.get(bt) || 0) > obs.tick) return null;
+        const spot = findBuildSpot(obs, map, bt, home, key => (spotTries.get(key) || 0) >= 2);
+        if (!spot) noSpotUntil.set(bt, obs.tick + 32);
+        return spot;
       }
 
       function expand() {
@@ -247,7 +266,11 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
         const bd = BUILDINGS[F.base];
         const ctx = placementCtxFromObs(obs, map, knownBlocked(obs, map));
         const taken = b => blds.some(x => d2(x, b) < 4) || obs.enemies.concat(obs.remembered).some(x => x.size && Math.hypot(x.x - b.x, x.y - b.y) < 8);
-        const spots = map.bases.filter(b => !taken(b) && (spotTries.get(`base:${b.x},${b.y}`) || 0) < 3).sort((a, b) => d2(a, home) - d2(b, home));
+        const reach = reachable(map, home.x, home.y);
+        const ours = bases.length ? bases : [home];
+        const score = s => Math.min(...ours.map(b => d2(b, s))) + (s.minerals === null ? 10 : 0) - (s.minerals ?? MINERAL_AMOUNT * 7) / 1500;
+        const spots = siteInfo.filter(s => !taken(s) && !s.enemy && (s.minerals === null || s.minerals > 2500) && reach[Math.floor(s.y + 2) * N + Math.floor(s.x)] &&
+          (spotTries.get(`base:${s.x},${s.y}`) || 0) < 3).sort((a, b) => score(a) - score(b));
         const spot = spots[0];
         if (!spot) return;
         const tx = Math.floor(spot.x) - 1, ty = Math.floor(spot.y) - 1;
@@ -276,6 +299,76 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
         }
       }
 
+      // Minerals left around a base site, from what we have seen (fields not seen yet count as full).
+      function fieldsNear(b) {
+        let n = 0;
+        for (const r of obs.resources) if (r.type === 'mineral' && d2(r, b) < 11) n += r.amount ?? resMem.get(r.id) ?? MINERAL_AMOUNT;
+        return n;
+      }
+
+      function updateSites() {
+        for (const r of obs.resources) if (r.type === 'mineral' && r.amount !== null) resMem.set(r.id, r.amount);
+        const enemyB = obs.enemies.filter(e => e.kind === 'building').concat(obs.remembered);
+        for (const s of siteInfo) {
+          const i = Math.floor(s.y) * N + Math.floor(s.x);
+          if (obs.visible[i]) s.lastSeen = obs.tick;
+          if (obs.explored[i]) s.minerals = fieldsNear(s);
+          s.enemy = enemyB.some(e => Math.hypot(e.x - s.x, e.y - s.y) < 9);
+        }
+      }
+
+      // Move workers from crowded mineral lines to thin ones (e.g. to a newly finished base).
+      function rebalance() {
+        if (obs.tick % 32 !== 0) return;
+        const lines = bases.filter(b => b.done).map(b => {
+          const fields = obs.resources.filter(r => r.type === 'mineral' && d2(r, b) < 11);
+          const on = workers.filter(w => w.order.type === 'gather' && fields.some(r => r.id === w.order.res));
+          return { b, fields, on, ratio: fields.length ? on.length / fields.length : 99 };
+        }).filter(l => l.fields.length);
+        if (lines.length < 2) return;
+        lines.sort((a, c) => a.ratio - c.ratio);
+        const thin = lines[0], crowded = lines[lines.length - 1];
+        if (thin.ratio >= 1.6 || crowded.ratio <= 2.2) return;
+        const move = crowded.on.filter(w => !w.carry && !w.hidden).slice(0, Math.min(4, Math.ceil((crowded.ratio - thin.ratio) * thin.fields.length / 2)));
+        const load = new Map(thin.fields.map(r => [r.id, thin.on.filter(w => w.order.res === r.id).length]));
+        for (const w of move) {
+          const r = thin.fields.sort((a, c) => load.get(a.id) - load.get(c.id))[0];
+          load.set(r.id, load.get(r.id) + 1);
+          cmds.push({ type: 'gather', units: [w.id], target: r.id });
+        }
+      }
+
+      // After the opening scout: every minute or so, send a surveyor round base sites we haven't looked at
+      // for a while, to find untouched minerals and enemy expansions. A flyer if we have one.
+      function surveyStep() {
+        if (!scoutDone || obs.tick < nextSurvey) return;
+        let s = units.find(u => u.id === surveyorId);
+        if (!s) {
+          surveyorId = 0;
+          const flyers = units.filter(u => UNITS[u.type].air);
+          const cheap = units.filter(u => !UNITS[u.type].worker && !UNITS[u.type].air).sort((a, c) => UNITS[c.type].speed - UNITS[a.type].speed);
+          s = flyers[0] || (units.filter(u => !UNITS[u.type].worker).length >= 6 ? cheap[0] : null) || (workers.length >= 14 ? pickBuilder(home) : null);
+          if (!s) { nextSurvey = obs.tick + 16 * 20; return; }
+          surveyorId = s.id;
+          const stale = siteInfo.filter(t => obs.tick - t.lastSeen > 16 * 150 && !bases.some(b => d2(b, t) < 6));
+          survey = [];
+          let at = { x: s.x, y: s.y };
+          while (survey.length < 4 && stale.length) {
+            stale.sort((a, c) => d2(a, at) - d2(c, at));
+            at = stale.shift(); survey.push(at);
+          }
+          if (!survey.length) { surveyorId = 0; nextSurvey = obs.tick + 16 * 45; return; }
+        }
+        survey = survey.filter(t => obs.tick - t.lastSeen > 16 * 10);
+        if (!survey.length) { // route done: back to work
+          cmds.push(UNITS[s.type].worker ? { type: 'stop', units: [s.id] } : { type: 'move', units: [s.id], x: rally.x, y: rally.y });
+          surveyorId = 0; nextSurvey = obs.tick + 16 * 60;
+          return;
+        }
+        const t = survey[0];
+        if (s.order.type !== 'move' || Math.hypot(s.order.x - t.x, s.order.y - (t.y + 3)) > 1) cmds.push({ type: 'move', units: [s.id], x: t.x, y: t.y + 3 });
+      }
+
       function scoutStep() {
         if (scoutDone) return;
         if (!scoutId) {
@@ -295,6 +388,32 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
         }
         const p = scoutQueue.sort((a, b) => d2(a, s) - d2(b, s))[0];
         if (s.order.type !== 'move' || Math.hypot(s.order.x - p.x, s.order.y - p.y) > 1) cmds.push({ type: 'move', units: [s.id], x: p.x, y: p.y });
+      }
+
+      // No enemy building known anywhere: split into search parties of ~4 and sweep the stalest parts of the map.
+      function hunt(sendTo) {
+        const parties = Math.max(1, Math.min(6, Math.floor(army.length / 4)));
+        const sorted = army.slice().sort((a, b) => a.id - b.id);
+        const age = (x, y) => obs.tick - seenAt[Math.floor(y / CELL) * CW + Math.floor(x / CELL)];
+        huntTargets.length = Math.min(huntTargets.length, parties);
+        for (let g = 0; g < parties; g++) {
+          const members = sorted.filter((_, i) => i % parties === g);
+          if (!members.length) continue;
+          const c = { x: members.reduce((n, u) => n + u.x, 0) / members.length, y: members.reduce((n, u) => n + u.y, 0) / members.length };
+          let t = huntTargets[g];
+          if (!t || Math.hypot(c.x - t.x, c.y - t.y) < 6 || age(t.x, t.y) < 16 * 20) {
+            let best = null, bestScore = -Infinity;
+            for (let cy = 0; cy < CW; cy++) for (let cx = 0; cx < CW; cx++) {
+              const x = cx * CELL + CELL / 2, y = cy * CELL + CELL / 2;
+              if (!map.pass[Math.floor(y) * N + Math.floor(x)]) continue;
+              if (huntTargets.some((o, j) => j !== g && o && Math.hypot(o.x - x, o.y - y) < 24)) continue; // spread the parties out
+              const sc = Math.min(age(x, y), 16 * 600) - Math.hypot(x - c.x, y - c.y) * 6;
+              if (sc > bestScore) { bestScore = sc; best = { x, y }; }
+            }
+            huntTargets[g] = t = best;
+          }
+          if (t) sendTo(t, 'attackMove', members);
+        }
       }
 
       function chooseTarget(from) {
@@ -322,9 +441,12 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
       function fight() {
         if (!army.length) return;
         const cx = army.reduce((s, u) => s + u.x, 0) / army.length, cy = army.reduce((s, u) => s + u.y, 0) / army.length;
-        const sendTo = (pt, type = 'attackMove') => {
-          const who = army.filter(u => u.order.type !== type || Math.hypot((u.order.x ?? 1e9) - pt.x, (u.order.y ?? 1e9) - pt.y) > 2.5);
-          if (who.length) cmds.push({ type, units: who.map(u => u.id), x: pt.x, y: pt.y });
+        const sendTo = (pt, type = 'attackMove', group = army) => {
+          const who = group.filter(u => (u.order.type !== type || Math.hypot((u.order.x ?? 1e9) - pt.x, (u.order.y ?? 1e9) - pt.y) > 2.5) && (restWorker.get(u.id) || 0) <= obs.tick);
+          for (const u of who) if (u.order.type === 'idle' && obs.tick - (orderedAt.get(u.id) ?? -1e9) < 32) restWorker.set(u.id, obs.tick + 16 * 20); // can't get there: back off
+          const go = who.filter(u => (restWorker.get(u.id) || 0) <= obs.tick);
+          for (const u of go) orderedAt.set(u.id, obs.tick);
+          if (go.length) cmds.push({ type, units: go.map(u => u.id), x: pt.x, y: pt.y });
         };
         if (threats.length) {
           const t = threats.sort((a, b) => d2(a, home) - d2(b, home))[0];
@@ -342,6 +464,9 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
             sendTo(rally, 'move');
             return;
           }
+          const knownB = obs.enemies.some(e => e.kind === 'building') || obs.remembered.length;
+          if (!knownB && map.starts.every(s => d2(s, home) <= 5 || obs.explored[Math.floor(s.y) * N + Math.floor(s.x)])) { hunt(sendTo); return; }
+          huntTargets.length = 0;
           const arrived = target && Math.hypot(cx - target.x, cy - target.y) < 5 && !obs.enemies.some(e => Math.hypot(e.x - target.x, e.y - target.y) < 10);
           const known = obs.enemies.some(e => e.kind === 'building') || obs.remembered.length;
           if (!target || arrived || (known && obs.tick % 64 === 0)) target = chooseTarget({ x: cx, y: cy });

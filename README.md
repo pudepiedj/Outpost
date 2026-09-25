@@ -17,7 +17,11 @@ to find the enemy. The minimap marks possible start locations you haven't seen y
 more expansions, including a ring of contested bases round the middle.
 
 Every player slot can be **Human**, **Human + economy assist**, **Bot** (Easy, Balanced or Rush) or **Empty**.
-Easy bots keep a small economy, never attack before minute 9, send small waves and rest for three minutes after each. Bots receive exactly the same fog-filtered
+Easy bots keep a small economy, never attack before minute 9, send small waves and rest for three minutes after each.
+Balanced and Rush bots scout: after the opening scout they send a surveyor (a flyer if they have one) round base
+sites they haven't seen lately, remember how many minerals are left at each, and expand to the richest reachable
+site before their own fields run dry (more bases on bigger maps). When they can't find an enemy, their army
+splits into search parties. Bots receive exactly the same fog-filtered
 view a human does. They cannot see the full game state.
 
 ## Running it

@@ -7,7 +7,7 @@ import { canStepLevels } from '../map.js';
 
 // Tiles connected to (sx, sy) on foot, ignoring buildings. Cached per map and start.
 const regions = new WeakMap();
-function reachable(map, sx, sy) {
+export function reachable(map, sx, sy) {
   let byStart = regions.get(map);
   if (!byStart) regions.set(map, byStart = new Map());
   const N = map.size, s0 = Math.floor(sy) * N + Math.floor(sx);
@@ -68,9 +68,14 @@ export function findBuildSpot(obs, map, bt, home, skip = () => false) {
   // search around the main first, then around every other base once the main fills up
   const anchors = bd.needsPower ? blds.filter(b => BUILDINGS[b.type].power && b.done) : bases.filter(b => b.done);
   if (!anchors.length) return null;
+  // a walkway all round the building: open, walkable ground reachable from its level (no cliff, water or
+  // mountain hard against it), so buildings never seal off a pocket
   const ringClear = (tx, ty) => {
+    const lvl = map.elev[ty * N + tx];
     for (let y = ty - 1; y <= ty + s; y++) for (let x = tx - 1; x <= tx + s; x++) {
       if (x < 0 || y < 0 || x >= N || y >= N || blocked[y * N + x]) return false;
+      const i = y * N + x;
+      if (!map.pass[i] || Math.abs(map.elev[i] - lvl) > 1) return false;
     }
     return true;
   };
