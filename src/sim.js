@@ -6,7 +6,7 @@
 //   observe(state, player);           // fog-filtered view: all a bot is ever given
 
 import {
-  TICK_RATE, DT, MAX_SUPPLY, FACTIONS, UNITS, BUILDINGS, def,
+  TICK_RATE, DT, MAX_SUPPLY, FACTIONS, UNITS, BUILDINGS, MAP_SIZES, def,
   MINE_TIME, MINE_AMOUNT, GAS_TIME, GAS_AMOUNT, LARVA_TIME, LARVA_MAX,
   SHIELD_REGEN, SHIELD_DELAY, QUEUE_MAX, REPAIR_COST, COLONY_SHIELD, canHit,
 } from './data.js';
@@ -18,12 +18,13 @@ export { TICK_RATE };
 
 // ---------------------------------------------------------------- setup
 
-export function createGame({ seed = 1, slots }) {
-  const map = generateMap(seed);
+export function createGame({ seed = 1, slots, mapSize = 'medium' }) {
+  const ms = MAP_SIZES[mapSize] || MAP_SIZES.medium;
+  const map = generateMap(seed, ms.size, ms.starts);
   const N = map.size;
   const rng = mulberry32(seed ^ 0x9e3779b9);
   const state = {
-    tick: 0, seed, rng, map, N,
+    tick: 0, seed, rng, map, N, mapSize,
     ents: new Map(), nextId: 1,
     occ: new Int32Array(N * N),
     walk: new Uint8Array(N * N),
@@ -43,9 +44,9 @@ export function createGame({ seed = 1, slots }) {
     stampOcc(state, e.tx, e.ty, e.w, e.h, e.id);
   }
 
-  // Randomly assign start locations to slots
-  const order = [0, 1, 2];
-  for (let i = 2; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+  // Randomly assign start locations to slots (on bigger maps some are left empty)
+  const order = map.starts.map((_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
 
   for (let p = 0; p < 3; p++) {
     const slot = slots[p];

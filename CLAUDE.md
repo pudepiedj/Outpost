@@ -8,6 +8,7 @@ No build step, no dependencies, no package install. See README.md for gameplay, 
 - Browser: `python3 serve.py` then open http://127.0.0.1:8642 (modules and Web Workers need http, not file://).
 - Headless: `node tools/arena.mjs --games 5 --seed 1` runs bot-vs-bot games of the real simulation, ~200x real time.
   Use it after any change to `src/sim.js`, `src/data.js`, `src/map.js`, `src/rules.js` or the bots.
+  Add `--size large` or `--size huge` to test the bigger maps (and `--verbose` for a per-minute summary).
 - Visual check in the cloud: Playwright + Chromium are preinstalled (`require('playwright')` from the global npm root);
   load the page, click `#start`, screenshot. The Google Font fails behind the sandbox proxy; that error is harmless.
 

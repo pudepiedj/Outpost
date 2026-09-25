@@ -1,7 +1,7 @@
 // Browser front end: menu, game loop, human input, HUD, bot hosting.
 
 import { createGame, step, issue, observe, publicMap, placementCtx } from './sim.js';
-import { TICK_RATE, UNITS, BUILDINGS, FACTIONS, PLAYER_COLORS, PLAYER_NAMES, MAX_SUPPLY, REPAIR_COST, COLONY_SHIELD, buildingsOf } from './data.js';
+import { TICK_RATE, UNITS, BUILDINGS, FACTIONS, PLAYER_COLORS, PLAYER_NAMES, MAX_SUPPLY, REPAIR_COST, COLONY_SHIELD, MAP_SIZES, buildingsOf } from './data.js';
 import { checkPlacement } from './rules.js';
 import { createRenderer } from './render.js';
 import { BOTS } from './bots/index.js';
@@ -40,6 +40,7 @@ function buildMenu() {
     box.appendChild(row);
   }
   $('seed').value = prefs?.seed || 1 + Math.floor(Math.random() * 99999);
+  $('mapSize').innerHTML = Object.entries(MAP_SIZES).map(([k, m]) => `<option value="${k}"${k === (prefs?.mapSize || 'medium') ? ' selected' : ''}>${m.name} (${m.size}×${m.size}, ${m.starts} start locations)</option>`).join('');
   $('factionInfo').innerHTML = Object.values(FACTIONS).map(f => `<div><b>${f.name}</b>${f.blurb}</div>`).join('');
   for (const el of document.querySelectorAll('.helpBody')) el.innerHTML = HELP.map(([k, v]) => `<kbd>${k}</kbd><span>${v}</span>`).join('');
 }
@@ -72,10 +73,11 @@ $('start').onclick = () => {
   if (slots.filter(s => s.controller !== 'off').length < 2) { err.textContent = 'At least two players are needed.'; return; }
   err.textContent = '';
   const seed = Math.max(1, Math.min(999999, parseInt($('seed').value, 10) || 1));
-  savePrefs({ slots: slots.map(s => [s.controller, s.faction]), seed });
+  const mapSize = $('mapSize').value;
+  savePrefs({ slots: slots.map(s => [s.controller, s.faction]), seed, mapSize });
   const facs = Object.keys(FACTIONS);
   for (const s of slots) if (s.faction === 'random') s.faction = facs[Math.floor(Math.random() * facs.length)];
-  startGame({ seed, slots });
+  startGame({ seed, slots, mapSize });
 };
 
 // ======================================================================= bots
@@ -114,7 +116,7 @@ class BotHost {
 function startGame(cfg) {
   for (const b of G.bots) b?.dispose();
   const slots = cfg.slots.map(s => (s.controller === 'off' ? null : { faction: s.faction }));
-  const st = createGame({ seed: cfg.seed, slots });
+  const st = createGame({ seed: cfg.seed, slots, mapSize: cfg.mapSize });
   G.state = st;
   G.human = cfg.slots.findIndex(s => s.controller.startsWith('human'));
   G.assist = null;
@@ -232,7 +234,7 @@ function gameOver() {
     <td>${p.stats.mined}</td><td>${p.stats.gasMined}</td><td>${p.stats.unitsBuilt}</td><td>${p.stats.kills}</td><td>${p.stats.losses}</td>
     <td>${p.alive ? (p.id === w ? 'Winner' : '—') : fmtTime(p.defeatedAt / TICK_RATE)}</td></tr>`).join('');
   $('goStats').innerHTML = `<tr><th>Player</th><th>Minerals</th><th>Gas</th><th>Units</th><th>Kills</th><th>Losses</th><th>Eliminated</th></tr>${rows}
-    <tr><td colspan="7" style="text-align:left;color:var(--dim)">Game length ${fmtTime(t)} · map seed ${st.seed}</td></tr>`;
+    <tr><td colspan="7" style="text-align:left;color:var(--dim)">Game length ${fmtTime(t)} · ${MAP_SIZES[st.mapSize].name} map, seed ${st.seed}</td></tr>`;
   $('gameover').classList.remove('hidden');
 }
 $('goView').onclick = () => { $('gameover').classList.add('hidden'); G.R.viewer = -1; setupViewSelect(); };

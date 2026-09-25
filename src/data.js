@@ -3,7 +3,13 @@
 export const TICK_RATE = 16;          // simulation ticks per game second
 export const DT = 1 / TICK_RATE;
 export const MAX_SUPPLY = 100;
-export const MAP_SIZE = 112;          // tiles per side ("medium")
+export const MAP_SIZE = 112;          // tiles per side ("medium"), the default
+// Bigger maps have more possible start locations than players, so you have to search for the enemy.
+export const MAP_SIZES = {
+  medium: { name: 'Medium', size: 112, starts: 3 },
+  large:  { name: 'Large',  size: 176, starts: 5 },
+  huge:   { name: 'Huge',   size: 240, starts: 6 },
+};
 
 export const PLAYER_COLORS = ['#4f8cff', '#ff5a4f', '#3ecf6e'];
 export const PLAYER_NAMES = ['Blue', 'Red', 'Green'];

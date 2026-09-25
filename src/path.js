@@ -41,7 +41,7 @@ export function createPathfinder(N) {
   const DIRS = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2]];
 
   // Returns a list of [x, y] waypoints (tile centres, last one possibly the exact goal) or null.
-  function find(walk, elev, sx, sy, gx, gy, maxNodes = 14000) {
+  function find(walk, elev, sx, sy, gx, gy, maxNodes = Math.max(14000, size * 0.4)) {
     let stx = Math.floor(sx), sty = Math.floor(sy);
     let gtx = Math.floor(gx), gty = Math.floor(gy);
     if (gtx < 0 || gty < 0 || gtx >= N || gty >= N) return null;

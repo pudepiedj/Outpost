@@ -11,6 +11,11 @@ The core rule from the original is kept: **you see only what your units and buil
 - **Clear:** currently visible.
 - Low ground cannot see up cliffs. High ground can see down.
 
+Choose the map size in the menu: **Medium** (112×112, 3 start locations), **Large** (176×176, 5) or
+**Huge** (240×240, 6). On Large and Huge there are more start locations than players, so you have to scout
+to find the enemy. The minimap marks possible start locations you haven't seen yet. Bigger maps also have
+more expansions, including a ring of contested bases round the middle.
+
 Every player slot can be **Human**, **Human + economy assist**, **Bot** (Easy, Balanced or Rush) or **Empty**.
 Easy bots keep a small economy, never attack before minute 9, send small waves and rest for three minutes after each. Bots receive exactly the same fog-filtered
 view a human does. They cannot see the full game state.
@@ -149,7 +154,7 @@ The simulation runs in Node without the renderer, about 300× real time:
 node tools/arena.mjs --games 10 --seed 1 --p1 vanguard:balanced --p2 swarm:rush --p3 ascendant:balanced
 ```
 
-Options: `--minutes N` sets the time limit, `--verbose` prints a per-minute summary, and `--p3 off`
+Options: `--size medium|large|huge` picks the map, `--minutes N` sets the time limit, `--verbose` prints a per-minute summary, and `--p3 off`
 runs a two-player game. Slot spec is `faction:style[:botId]`.
 
 ## Layout

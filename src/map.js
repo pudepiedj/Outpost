@@ -20,15 +20,16 @@ export function mulberry32(seed) {
 // Movement between adjacent tiles is allowed unless it jumps a cliff (low <-> high).
 export function canStepLevels(a, b) { return Math.abs(a - b) <= 1; }
 
-export function generateMap(seed, N = MAP_SIZE) {
+export function generateMap(seed, N = MAP_SIZE, K = 3) {
   for (let attempt = 0; attempt < 20; attempt++) {
-    const m = tryGenerate(seed + attempt * 7919, N);
+    const m = tryGenerate(seed + attempt * 7919, N, K);
     if (m) return m;
   }
   throw new Error('map generation failed');
 }
 
-function tryGenerate(seed, N) {
+// K: number of start locations (main bases on plateaus), spread round a ring.
+function tryGenerate(seed, N, K) {
   const rng = mulberry32(seed);
   const elev = new Uint8Array(N * N);
   const pass = new Uint8Array(N * N).fill(1);
@@ -48,8 +49,8 @@ function tryGenerate(seed, N) {
   const deg = Math.PI / 180;
 
   // Main bases on plateaus
-  for (let k = 0; k < 3; k++) {
-    const a = a0 + k * Math.PI * 2 / 3;
+  for (let k = 0; k < K; k++) {
+    const a = a0 + k * Math.PI * 2 / K;
     const sx = Math.round(c + R * Math.cos(a)), sy = Math.round(c + R * Math.sin(a));
     const s = { x: sx + 0.5, y: sy + 0.5 };
     const d = norm({ x: c - s.x, y: c - s.y });
@@ -84,11 +85,23 @@ function tryGenerate(seed, N) {
     placeResources(nat, nu, 7, 6.5);
   }
   // Third bases between the mains, near the map edge
-  for (let k = 0; k < 3; k++) {
-    const a = a0 + Math.PI / 3 + k * Math.PI * 2 / 3;
+  for (let k = 0; k < K; k++) {
+    const a = a0 + Math.PI / K + k * Math.PI * 2 / K;
     const t = { x: Math.round(c + (R - 2) * Math.cos(a)) + 0.5, y: Math.round(c + (R - 2) * Math.sin(a)) + 0.5 };
     bases.push({ x: t.x, y: t.y, start: false });
     placeResources(t, norm({ x: t.x - c, y: t.y - c }), 7, 6.5);
+  }
+  // Bigger maps: a ring of contested bases in the middle, and one at the centre
+  if (K > 3) {
+    for (let k = 0; k < K; k++) {
+      const a = a0 + Math.PI / K + k * Math.PI * 2 / K, rr = R * 0.5;
+      const t = { x: Math.round(c + rr * Math.cos(a)) + 0.5, y: Math.round(c + rr * Math.sin(a)) + 0.5 };
+      bases.push({ x: t.x, y: t.y, start: false });
+      placeResources(t, norm({ x: t.x - c, y: t.y - c }), 7, 6.5);
+    }
+    const t = { x: Math.round(c) + 0.5, y: Math.round(c) + 0.5 };
+    bases.push({ x: t.x, y: t.y, start: false });
+    placeResources(t, { x: Math.cos(a0), y: Math.sin(a0) }, 8, 6.5);
   }
 
   function placeResources(b, u, count, rad) {
@@ -127,7 +140,7 @@ function tryGenerate(seed, N) {
   for (const r of resources) for (let y = r.ty; y < r.ty + r.h; y++) for (let x = r.tx; x < r.tx + r.w; x++) blockedByRes[idx(x, y)] = 1;
   const keyPoints = bases.map(b => [Math.floor(b.x), Math.floor(b.y) + 2]);
   if (!connected()) return null;
-  for (let i = 0; i < 34; i++) {
+  for (let i = 0, n = Math.round(34 * (N / 112) ** 2); i < n; i++) {
     const ox = 4 + rng() * (N - 8), oy = 4 + rng() * (N - 8);
     if (bases.some(b => Math.hypot(b.x - ox, b.y - oy) < 13)) continue;
     if (ramps.some(r => Math.hypot(r.x - ox, r.y - oy) < 7)) continue;

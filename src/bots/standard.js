@@ -45,6 +45,7 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
   let scoutId = 0, scoutDone = false, scoutQueue = [];
   let attacking = false, wave = S.firstWave, target = null;
   let expander = 0, restUntil = 0;
+  const CELL = 8, CW = Math.ceil(N / CELL), seenAt = new Int32Array(CW * CW).fill(-1e6); // when each 8x8 cell was last in sight
 
   const d2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
@@ -52,6 +53,10 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
     onTick(obs) {
       const cmds = [];
       const mine = obs.mine;
+      for (let cy = 0; cy < CW; cy++) for (let cx = 0; cx < CW; cx++) {
+        const x = Math.min(N - 1, cx * CELL + CELL / 2), y = Math.min(N - 1, cy * CELL + CELL / 2);
+        if (obs.visible[y * N + x]) seenAt[cy * CW + cx] = obs.tick;
+      }
       const units = mine.filter(e => e.kind === 'unit');
       const blds = mine.filter(e => e.kind === 'building');
       const workers = units.filter(u => UNITS[u.type].worker && u.id !== scoutId);
@@ -298,9 +303,18 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
         }
         const unseen = map.starts.filter(s => d2(s, home) > 5 && !obs.explored[Math.floor(s.y) * N + Math.floor(s.x)]);
         if (unseen.length) return unseen.sort((a, b) => d2(a, from) - d2(b, from))[0];
-        const unseenBases = map.bases.filter(b => !obs.visible[Math.floor(b.y) * N + Math.floor(b.x)]);
-        if (unseenBases.length) return unseenBases[(obs.tick >> 8) % unseenBases.length];
-        return null;
+        // hunt: bases not looked at for a while first, then the stalest part of the map, nearest first
+        const age = (x, y) => obs.tick - seenAt[Math.floor(y / CELL) * CW + Math.floor(x / CELL)];
+        const stale = map.bases.filter(b => age(b.x, b.y) > 16 * 90);
+        if (stale.length) return stale.sort((a, b) => d2(a, from) - d2(b, from))[0];
+        let best = null, bestScore = -Infinity;
+        for (let cy = 0; cy < CW; cy++) for (let cx = 0; cx < CW; cx++) {
+          const x = cx * CELL + CELL / 2, y = cy * CELL + CELL / 2;
+          if (!map.pass[Math.floor(y) * N + Math.floor(x)]) continue;
+          const sc = age(x, y) - Math.hypot(x - from.x, y - from.y) * 8;
+          if (sc > bestScore) { bestScore = sc; best = { x, y }; }
+        }
+        return best;
       }
 
       function fight() {
@@ -317,16 +331,18 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
           return;
         }
         const rested = !S.attackAfter || (obs.tick >= S.attackAfter * 16 && obs.tick >= restUntil);
-        if (!attacking && army.length >= wave && rested) { attacking = true; target = null; }
+        const maxed = obs.supplyUsed >= Math.min(obs.supplyCap, MAX_SUPPLY) - 3 && obs.supplyCap >= MAX_SUPPLY - 4; // can't grow: go with what we have
+        if (!attacking && (army.length >= wave || (maxed && army.length >= 6)) && rested) { attacking = true; target = null; }
         if (attacking) {
-          if (army.length < Math.max(3, wave * 0.35)) {
+          if (army.length < Math.max(3, Math.min(wave, maxed ? army.length + 1 : wave) * 0.35)) {
             attacking = false; wave = Math.min(S.maxWave || 40, wave + S.waveGrowth); target = null;
             if (S.restAfter) restUntil = obs.tick + S.restAfter * 16;
             sendTo(rally, 'move');
             return;
           }
           const arrived = target && Math.hypot(cx - target.x, cy - target.y) < 5 && !obs.enemies.some(e => Math.hypot(e.x - target.x, e.y - target.y) < 10);
-          if (!target || arrived || obs.tick % 64 === 0) target = chooseTarget({ x: cx, y: cy });
+          const known = obs.enemies.some(e => e.kind === 'building') || obs.remembered.length;
+          if (!target || arrived || (known && obs.tick % 64 === 0)) target = chooseTarget({ x: cx, y: cy });
           if (target) sendTo(target);
           return;
         }

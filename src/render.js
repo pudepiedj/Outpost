@@ -1365,6 +1365,13 @@ export function createRenderer(canvas, mini, state) {
       mctx.imageSmoothingEnabled = true;
       mctx.drawImage(fog, 0, 0);
     }
+    // possible start locations you haven't looked at yet: that's where to search for the enemy
+    mctx.lineWidth = 1.5 / a;
+    for (const s of state.map.starts) if (!tileExplored(s.x, s.y)) {
+      mctx.strokeStyle = 'rgba(255,215,120,0.75)';
+      mctx.beginPath(); mctx.arc(s.x, s.y, 4, 0, TAU); mctx.stroke();
+      mctx.beginPath(); mctx.moveTo(s.x - 2, s.y); mctx.lineTo(s.x + 2, s.y); mctx.moveTo(s.x, s.y - 2); mctx.lineTo(s.x, s.y + 2); mctx.stroke();
+    }
     for (const q of state.players) if (q.dome && domeSeen(q.dome)) {
       mctx.strokeStyle = '#8fd8ff'; mctx.lineWidth = 1.5 / a; mctx.fillStyle = 'rgba(100,180,255,0.18)';
       mctx.beginPath(); mctx.arc(q.dome.x, q.dome.y, q.dome.r, 0, TAU); mctx.fill(); mctx.stroke();
