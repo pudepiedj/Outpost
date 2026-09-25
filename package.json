@@ -1,0 +1,11 @@
+{
+  "name": "outpost",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A three-faction real-time strategy game with fog of war, playable by humans or bots.",
+  "scripts": {
+    "serve": "python3 serve.py",
+    "arena": "node tools/arena.mjs"
+  }
+}

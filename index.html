@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Outpost</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <canvas id="view"></canvas>
+
+  <div id="topbar" class="hidden">
+    <div class="res">
+      <span class="ico min" title="Minerals"></span><b id="rMin">0</b>
+      <span class="ico gas" title="Gas"></span><b id="rGas">0</b>
+      <span class="ico sup" title="Supply"></span><b id="rSup">0/0</b>
+    </div>
+    <div id="clock">0:00</div>
+    <div class="ctl">
+      <select id="viewSel" title="Whose fog of war to show"></select>
+      <button id="btnAutoW" class="toggle hidden" title="Keep bases training workers, send idle workers near base back to mining, put 3 workers on each new gas building">Auto-workers</button>
+      <button id="btnAutoS" class="toggle hidden" title="Build supply before you are blocked">Auto-supply</button>
+      <button id="btnSpeed" title="Game speed (− / =)">1×</button>
+      <button id="btnPause" title="Pause (Space)">Pause</button>
+      <button id="btnHelp" title="Controls (F1 or ?)">?</button>
+      <button id="btnMenu">Quit</button>
+    </div>
+  </div>
+
+  <div id="feed"></div>
+  <div id="banner" class="hidden"></div>
+  <div id="tooltip" class="hidden"></div>
+
+  <div id="panel" class="hidden">
+    <div id="miniWrap"><canvas id="mini"></canvas></div>
+    <div id="info"></div>
+    <div id="card"></div>
+  </div>
+
+  <div id="menu" class="overlay">
+    <div class="menuCard">
+      <h1>OUTPOST</h1>
+      <p class="sub">Three factions. One uncharted world. You only see what your forces can see.</p>
+      <div id="slots"></div>
+      <div class="row seedRow">
+        <label>Map seed <input id="seed" type="number" min="1" max="999999"></label>
+        <button id="reseed" class="ghost">New map</button>
+      </div>
+      <div id="factionInfo"></div>
+      <div class="row">
+        <button id="start" class="primary">Start game</button>
+      </div>
+      <p id="menuErr"></p>
+      <details class="controls">
+        <summary>Controls</summary>
+        <div class="helpBody"></div>
+      </details>
+    </div>
+  </div>
+
+  <div id="help" class="overlay hidden">
+    <div class="menuCard">
+      <h2>Controls</h2>
+      <div class="helpBody"></div>
+      <div class="row"><button id="helpClose" class="primary">Close</button></div>
+    </div>
+  </div>
+
+  <div id="gameover" class="overlay hidden">
+    <div class="menuCard">
+      <h2 id="goTitle"></h2>
+      <table id="goStats"></table>
+      <div class="row">
+        <button id="goView" class="ghost">Look at the map</button>
+        <button id="goMenu" class="primary">Back to menu</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
