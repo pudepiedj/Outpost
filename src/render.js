@@ -3,7 +3,7 @@
 // Procedural art (upright buildings and units with visible faces), cliffs, fog of war, effects,
 // and a diamond minimap. Terrain is pre-rendered lazily in screen-space chunks.
 
-import { UNITS, BUILDINGS, PLAYER_COLORS } from './data.js';
+import { UNITS, BUILDINGS, PLAYER_COLORS, COLONY_SHIELD } from './data.js';
 import { LOW, RAMP, HIGH, DECO_ROCK, DECO_WATER } from './map.js';
 import { isVisibleTo } from './sim.js';
 
@@ -245,6 +245,7 @@ const BH = {
   hive: 46, pod: 32, pit: 22, den: 36, extractor: 30,
   nexus: 62, pylon: 54, gateway: 60, core: 42, assimilator: 30,
   turret: 34, thorn: 36, spire: 58,
+  bulwark: 46, heart: 36, sanctum: 50,
 };
 const FLY = 34; // flying units hover this high (pixels at zoom 1)
 const UH = { engineer: 16, trooper: 24, crawler: 20, drone: 12, biter: 12, spitter: 26, acolyte: 26, warden: 28, lancer: 30, hawk: FLY + 12, stinger: FLY + 10, seraph: FLY + 14 };
@@ -314,6 +315,10 @@ export function createRenderer(canvas, mini, state) {
         if (ev.splash) r.effects.push({ type: 'boom', x: ev.tx, y: ev.ty, size: 1.6, t0: now + 0.05, dur: 0.35 });
       } else if (ev.type === 'death') {
         r.effects.push({ type: 'boom', x: ev.x, y: ev.y, size: ev.kind === 'building' ? ev.size * 1.2 : 1.1, t0: now, dur: ev.kind === 'building' ? 0.9 : 0.45, big: ev.kind === 'building' });
+      } else if (ev.type === 'domeHit') {
+        r.effects.push({ type: 'ripple', x: ev.x, y: ev.y, owner: ev.player, t0: now, dur: 0.5 });
+      } else if (ev.type === 'dome') {
+        if (ev.what !== 'fading') r.effects.push({ type: ev.what === 'up' ? 'domeRise' : 'domeFall', x: ev.x, y: ev.y, t0: now, dur: ev.what === 'up' ? 1.2 : 1.0 });
       } else if (ev.type === 'attacked' && ev.player === r.viewer) {
         r.pings.push({ x: ev.x, y: ev.y, t0: now });
       }
@@ -462,6 +467,12 @@ export function createRenderer(canvas, mini, state) {
         }
       }
     }
+    if (ui.placement && BUILDINGS[ui.placement.btype].dome && ui.player >= 0) {
+      const st0 = state.players[ui.player].start;
+      ctx.fillStyle = 'rgba(90,170,255,0.10)'; ctx.strokeStyle = 'rgba(140,200,255,0.6)'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 5]);
+      groundEllipse(st0.x, st0.y, COLONY_SHIELD.placeWithin); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = 'rgba(140,200,255,0.3)'; groundEllipse(st0.x, st0.y, COLONY_SHIELD.radius); ctx.stroke(); ctx.setLineDash([]);
+    }
     if (ui.placement) {
       const { btype, tx, ty, ok } = ui.placement;
       const s = BUILDINGS[btype].size;
@@ -502,6 +513,7 @@ export function createRenderer(canvas, mini, state) {
     // effects
     r.effects = r.effects.filter(fx => now - fx.t0 < fx.dur);
     for (const fx of r.effects) drawEffect(fx, now);
+    for (const q of state.players) if (q.dome && domeSeen(q.dome)) drawDome(q.dome, now);
 
     // overlays
     for (const [, e, ghost] of list) {
@@ -719,6 +731,18 @@ export function createRenderer(canvas, mini, state) {
       ctx.fillStyle = col; groundEllipse(cx, cy, 0.14, 25); ctx.fill();
       if (!back) { gun(-1); gun(1); }
       if (b.target && b.cooldown > BUILDINGS.turret.cooldown - 0.1) { const [mx, my] = P(cx + c * 0.85, cy + sn * 0.85, 25); halo(mx, my, 8 * z, '255,220,120', 0.9); }
+    } else if (type === 'bulwark') { // shield generator: armoured block with an emitter array
+      vgBox(x0 + 0.1, y0 + 0.1, x1 - 0.1, y1 - 0.1, 0, 12, -0.2);
+      faceBand(x0 + 0.1, y0 + 0.1, x1 - 0.1, y1 - 0.1, 6, 9, col);
+      cylinder(cx, cy, 0.5, 12, 26, '#8e97a1', '#3b4149', '#5d676f');
+      const up = !!state.players[b.owner]?.dome, ready = done && !up && state.tick >= (b.rechargeUntil || 0);
+      for (let i = 0; i < 4; i++) { // four emitter prongs
+        const an = i * TAU / 4 + TAU / 8, px = cx + Math.cos(an) * 0.42, py = cy + Math.sin(an) * 0.42;
+        ctx.strokeStyle = '#c9cfd6'; ctx.lineWidth = 2 * z; line(...P(px, py, 26), ...P(cx + Math.cos(an) * 0.2, cy + Math.sin(an) * 0.2, 44));
+      }
+      const [ox, oy] = P(cx, cy, 44);
+      if (done) halo(ox, oy, (up ? 22 : 12) * z, '120,200,255', up ? 0.8 : ready ? 0.45 : 0.15);
+      ctx.fillStyle = up || ready ? '#dff4ff' : '#58606a'; circle(ox, oy, 4 * z, true);
     } else if (type === 'refinery') {
       vgBox(x0 + 0.08, y0 + 0.08, x1 - 0.08, y1 - 0.08, 0, 6, -0.3);
       cylinder(cx - 0.1, cy - 0.1, 0.6, 6, 34, '#8e97a1', '#3b4149', '#5d676f');
@@ -793,6 +817,15 @@ export function createRenderer(canvas, mini, state) {
       }
       const [ex, ey] = P(cx, cy, 24);
       halo(ex, ey, 12 * z, '123,211,90', 0.5); ctx.fillStyle = '#9be36a'; circle(ex, ey, 3.5 * z, true);
+    } else if (type === 'heart') { // shield generator: a beating heart under a blue membrane
+      const up = !!state.players[b.owner]?.dome, ready = !up && state.tick >= (b.rechargeUntil || 0);
+      const beat = 1 + 0.06 * Math.max(0, Math.sin(now * (up ? 7 : 3.5)));
+      dome(cx, cy, 0.8, 0, 14, ...SW);
+      veins(cx, cy, 0.8, 14, 6);
+      dome(cx, cy, 0.5 * beat, 12, 16 * beat, '#ff9ab8', '#b0305a', '#4a0f24');
+      ctx.fillStyle = `rgba(120,200,255,${up ? 0.35 : ready ? 0.22 : 0.08})`;
+      const [mx, my] = P(cx, cy, 12); ctx.beginPath(); ctx.ellipse(mx, my, 0.62 * SQ2 * HW * z, (0.62 * SQ2 * HH + 22) * z, 0, Math.PI, TAU); ctx.ellipse(mx, my, 0.62 * SQ2 * HW * z, 0.62 * SQ2 * HH * z, 0, 0, Math.PI); ctx.fill();
+      ctx.strokeStyle = `rgba(170,230,255,${up ? 0.8 : 0.4})`; ctx.lineWidth = z; ctx.stroke();
     } else if (type === 'thorn') {
       dome(cx, cy, 0.75, 0, 12, '#9a6a84', '#5a2e44', '#2c1422');
       veins(cx, cy, 0.75, 12, 5);
@@ -880,6 +913,18 @@ export function createRenderer(canvas, mini, state) {
       ctx.fillStyle = done ? glow : 'rgba(127,211,255,0.3)'; circle(sx, sy, 5.5 * z, true);
       ctx.strokeStyle = '#d9c68f';
       ctx.beginPath(); ctx.ellipse(sx, sy, 16 * z, 16 * z * Math.abs(tilt) + 2 * z, 0, 0, Math.PI); ctx.stroke();
+    } else if (type === 'sanctum') { // shield generator: three crystals circling a bright core
+      const up = !!state.players[b.owner]?.dome, ready = done && !up && state.tick >= (b.rechargeUntil || 0);
+      asBox(x0 + 0.1, y0 + 0.1, x1 - 0.1, y1 - 0.1, 0, 6);
+      faceBand(x0 + 0.1, y0 + 0.1, x1 - 0.1, y1 - 0.1, 2, 4, col);
+      asBox(x0 + 0.45, y0 + 0.45, x1 - 0.45, y1 - 0.45, 6, 12, 0.05);
+      const [ox, oy] = P(cx, cy, 32 + bob);
+      const orbit = now * (up ? 2.2 : 0.8);
+      const cr = [0, 1, 2].map(i => { const an = orbit + i * TAU / 3; return [Math.sin(an) + Math.cos(an), P(cx + Math.cos(an) * 0.55, cy + Math.sin(an) * 0.55, 30 + bob + Math.sin(an * 2) * 3)]; });
+      for (const [dp, [px, py]] of cr) if (dp < 0) crystal(px, py, 4 * z, 10 * z, done ? glow : 'rgba(127,211,255,0.3)');
+      if (done) halo(ox, oy, (up ? 26 : 14) * z, '127,211,255', up ? 0.8 : ready ? 0.45 : 0.15);
+      ctx.fillStyle = up || ready ? '#eaf8ff' : '#667'; circle(ox, oy, 5 * z, true);
+      for (const [dp, [px, py]] of cr) if (dp >= 0) crystal(px, py, 4 * z, 10 * z, done ? glow : 'rgba(127,211,255,0.3)');
     } else if (type === 'spire') {
       asBox(x0 + 0.25, y0 + 0.25, x1 - 0.25, y1 - 0.25, 0, 6);
       faceBand(x0 + 0.25, y0 + 0.25, x1 - 0.25, y1 - 0.25, 2, 4, col);
@@ -1206,6 +1251,24 @@ export function createRenderer(canvas, mini, state) {
       ctx.strokeStyle = `rgba(${colr},${1 - k})`; ctx.lineWidth = (fx.unit === 'crawler' || fx.unit === 'spire' ? 3 : fx.unit === 'lancer' || fx.unit === 'seraph' ? 2.5 : 1.5) * z;
       line(ax, ay, bx, by);
       ctx.fillStyle = `rgba(${colr},${1 - k})`; circle(ax + (bx - ax) * 0.08, ay + (by - ay) * 0.08, 3 * z, true);
+    } else if (fx.type === 'ripple') {
+      if (!tileVisible(fx.x, fx.y)) return;
+      const q = state.players[fx.owner], c = q && q.dome ? q.dome : { x: fx.x, y: fx.y };
+      const ang = Math.atan2(fx.y - c.y, fx.x - c.x);
+      const [x, y] = P(fx.x, fx.y, 14);
+      ctx.save(); ctx.translate(x, y); ctx.rotate(Math.atan2((Math.cos(ang) + Math.sin(ang)) * HH, (Math.cos(ang) - Math.sin(ang)) * HW) + Math.PI / 2);
+      ctx.strokeStyle = `rgba(190,235,255,${0.9 * (1 - k)})`; ctx.lineWidth = 2.5 * z;
+      ellipse(0, 0, (5 + 22 * k) * z, (3 + 10 * k) * z, false, true);
+      ctx.fillStyle = `rgba(130,210,255,${0.35 * (1 - k)})`; ellipse(0, 0, (4 + 14 * k) * z, (2 + 7 * k) * z, true);
+      ctx.restore();
+    } else if (fx.type === 'domeRise' || fx.type === 'domeFall') {
+      const R = COLONY_SHIELD.radius, t = fx.type === 'domeRise' ? k : 1 - k;
+      ctx.strokeStyle = `rgba(160,225,255,${0.8 * (1 - k)})`; ctx.lineWidth = 3 * z;
+      groundEllipse(fx.x, fx.y, R * (fx.type === 'domeRise' ? 0.2 + 0.8 * k : 1 + 0.3 * k)); ctx.stroke();
+      if (fx.type === 'domeFall') for (let i = 0; i < 24; i++) {
+        const a = i * TAU / 24, [px, py] = P(fx.x + Math.cos(a) * R, fx.y + Math.sin(a) * R, 10 + 40 * t * Math.abs(Math.sin(a * 3)));
+        ctx.fillStyle = `rgba(170,230,255,${0.8 * (1 - k)})`; circle(px, py - k * 20 * z, 2 * z, true);
+      }
     } else if (fx.type === 'boom') {
       if (!tileVisible(fx.x, fx.y)) return;
       const [x, y] = P(fx.x, fx.y, 6);
@@ -1214,6 +1277,60 @@ export function createRenderer(canvas, mini, state) {
       ctx.strokeStyle = `rgba(255,230,180,${0.6 * (1 - k)})`; ctx.lineWidth = 2 * z; ellipse(x, y + rad * 0.3, rad * 1.3, rad * 0.65, false, true);
       if (fx.big) { ctx.fillStyle = `rgba(60,50,40,${0.5 * (1 - k)})`; circle(x + T * z * 0.3, y - T * z * 0.4 - k * T * z, rad * 0.6, true); }
     }
+  }
+
+  // --------------------------------------------------------------- colony shield dome
+  function domeSeen(dm) {
+    if (r.viewer < 0 || dm.owner === r.viewer) return true;
+    for (let k = 0; k < 16; k++) if (tileVisible(Math.max(0, Math.min(N - 1, dm.x + Math.cos(k * TAU / 16) * (dm.r + 0.5))), Math.max(0, Math.min(N - 1, dm.y + Math.sin(k * TAU / 16) * (dm.r + 0.5))))) return true;
+    return false;
+  }
+  function drawDome(dm, now) {
+    const [cx, cy] = P(dm.x, dm.y);
+    const rx = dm.r * SQ2 * HW * z, ry = dm.r * SQ2 * HH * z, hz = dm.r * 26 * z; // a squashed hemisphere
+    const strength = Math.max(0, dm.hp / dm.maxHp), left = (dm.until - state.tick) / 16;
+    // flicker when weak or about to fade
+    const flick = (strength < 0.25 || left < 15) ? 0.65 + 0.35 * Math.sin(now * (left < 5 ? 30 : 14)) : 1;
+    const a = (0.35 + 0.65 * strength) * flick;
+    const outline = () => { ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI); ctx.ellipse(cx, cy, rx, ry + hz, 0, Math.PI, TAU); };
+    ctx.save();
+    // body: clear in the middle, bluer towards the rim (like looking through glass at an angle)
+    const gr = ctx.createRadialGradient(cx - rx * 0.25, cy - hz * 0.55, rx * 0.05, cx, cy - hz * 0.3, rx * 1.05);
+    gr.addColorStop(0, `rgba(210,240,255,${0.10 * a})`); gr.addColorStop(0.55, `rgba(90,170,255,${0.07 * a})`);
+    gr.addColorStop(0.85, `rgba(80,160,255,${0.20 * a})`); gr.addColorStop(1, `rgba(120,200,255,${0.42 * a})`);
+    ctx.fillStyle = gr; outline(); ctx.fill();
+    ctx.clip();
+    // shimmering hex lattice drifting over the surface
+    ctx.strokeStyle = `rgba(170,225,255,${0.16 * a})`; ctx.lineWidth = Math.max(0.6, z);
+    const cell = 26 * z, hh = cell * 0.866, drift = (now * 8 * z) % (hh * 2);
+    for (let row = -1, y = cy - hz - ry - hh * 2 + drift; y < cy + ry + hh; y += hh, row++) {
+      for (let x = cx - rx - cell * 2 + (row & 1 ? cell * 0.75 : 0); x < cx + rx + cell; x += cell * 1.5) {
+        const tw = 0.5 + 0.5 * Math.sin(now * 2.2 + x * 0.05 + y * 0.07);
+        ctx.globalAlpha = 0.4 + 0.6 * tw;
+        ctx.beginPath();
+        for (let i = 0; i <= 6; i++) { const t = i * TAU / 6; const px = x + Math.cos(t) * cell * 0.5, py = y + Math.sin(t) * hh * 0.5; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+        ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+    // bands of light sweeping up the dome
+    for (let i = 0; i < 2; i++) {
+      const t = (now * 0.25 + i * 0.5) % 1, yy = cy + ry - t * (hz + ry * 2), w = rx * Math.sqrt(Math.max(0, 1 - Math.pow((cy - yy - hz * 0.2) / (hz + ry), 2)));
+      const bg = ctx.createLinearGradient(0, yy - 10 * z, 0, yy + 10 * z);
+      bg.addColorStop(0, 'rgba(150,215,255,0)'); bg.addColorStop(0.5, `rgba(170,230,255,${0.14 * a})`); bg.addColorStop(1, 'rgba(150,215,255,0)');
+      ctx.fillStyle = bg; ctx.fillRect(cx - w, yy - 10 * z, w * 2, 20 * z);
+    }
+    ctx.restore();
+    // rim: bright edge of the dome, and a glowing ring where it meets the ground
+    ctx.strokeStyle = `rgba(160,220,255,${0.55 * a})`; ctx.lineWidth = 2 * z;
+    ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry + hz, 0, Math.PI, TAU); ctx.stroke();
+    ctx.strokeStyle = `rgba(120,200,255,${0.7 * a})`; ctx.lineWidth = 3 * z;
+    ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, TAU); ctx.stroke();
+    ctx.strokeStyle = `rgba(220,245,255,${0.35 * a})`; ctx.lineWidth = 1.2 * z;
+    ctx.beginPath(); ctx.ellipse(cx, cy - 3 * z, rx * 0.985, ry * 0.97, 0, 0, TAU); ctx.stroke();
+    // a soft highlight near the top-left, as on glass
+    ctx.fillStyle = `rgba(230,248,255,${0.10 * a})`;
+    ctx.beginPath(); ctx.ellipse(cx - rx * 0.35, cy - hz * 0.75, rx * 0.25, hz * 0.12, -0.35, 0, TAU); ctx.fill();
   }
 
   // --------------------------------------------------------------- minimap
@@ -1247,6 +1364,10 @@ export function createRenderer(canvas, mini, state) {
       }
       mctx.imageSmoothingEnabled = true;
       mctx.drawImage(fog, 0, 0);
+    }
+    for (const q of state.players) if (q.dome && domeSeen(q.dome)) {
+      mctx.strokeStyle = '#8fd8ff'; mctx.lineWidth = 1.5 / a; mctx.fillStyle = 'rgba(100,180,255,0.18)';
+      mctx.beginPath(); mctx.arc(q.dome.x, q.dome.y, q.dome.r, 0, TAU); mctx.fill(); mctx.stroke();
     }
     mctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     // camera view (a rectangle on screen is a rotated rectangle on the map)

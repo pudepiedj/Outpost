@@ -8,7 +8,7 @@
 import {
   TICK_RATE, DT, MAX_SUPPLY, FACTIONS, UNITS, BUILDINGS, def,
   MINE_TIME, MINE_AMOUNT, GAS_TIME, GAS_AMOUNT, LARVA_TIME, LARVA_MAX,
-  SHIELD_REGEN, SHIELD_DELAY, QUEUE_MAX, REPAIR_COST, canHit,
+  SHIELD_REGEN, SHIELD_DELAY, QUEUE_MAX, REPAIR_COST, COLONY_SHIELD, canHit,
 } from './data.js';
 import { generateMap, mulberry32, HIGH } from './map.js';
 import { createPathfinder, lineWalkable } from './path.js';
@@ -28,7 +28,7 @@ export function createGame({ seed = 1, slots }) {
     occ: new Int32Array(N * N),
     walk: new Uint8Array(N * N),
     players: [],
-    events: [],
+    events: [], inbox: [], // inbox: events raised by commands between ticks, delivered with the next tick
     over: false, winner: -1,
     pf: createPathfinder(N),
     circles: new Map(),
@@ -53,7 +53,7 @@ export function createGame({ seed = 1, slots }) {
       id: p, active: !!slot, alive: !!slot, faction: slot ? slot.faction : null,
       minerals: 50, gas: 0, supplyUsed: 0, supplyCap: 0,
       visible: new Uint8Array(N * N), explored: new Uint8Array(N * N),
-      memory: new Map(), start: null, lastAttackMsg: -1e9,
+      memory: new Map(), start: null, lastAttackMsg: -1e9, dome: null,
       stats: { mined: 0, gasMined: 0, unitsBuilt: 0, kills: 0, losses: 0 },
     };
     state.players.push(player);
@@ -100,7 +100,7 @@ function createBuilding(state, owner, type, tx, ty) {
     done: false, progress: 0, lastBuilt: -1, lastHit: -1e9,
     queue: [], prodProgress: 0, rally: null, powered: true,
     larva: d.larva ? LARVA_MAX : 0, larvaTimer: 0, eggs: [],
-    geyser: 0, gasBusyUntil: 0, cooldown: 0, target: 0, facing: Math.PI * 0.8,
+    geyser: 0, gasBusyUntil: 0, cooldown: 0, target: 0, facing: Math.PI * 0.8, rechargeUntil: 0,
   });
   if (d.onGeyser) {
     const g = state.ents.get(state.occ[ty * state.N + tx]);
@@ -160,6 +160,8 @@ function gap(u, e) {
 
 export function isVisibleTo(state, p, e) {
   if (e.owner === p) return true;
+  // a raised colony shield gives away its generator to anyone who can see the dome
+  if (state.domesUp && e.kind === 'building' && e.owner >= 0) { const dm = state.players[e.owner].dome; if (dm && dm.gen === e.id && dm.seen[p]) return true; }
   const vis = state.players[p].visible, N = state.N;
   if (e.kind === 'unit') return !e.hidden && vis[tileOf(state, e.x, e.y)] === 1;
   const w = e.size || e.w, h = e.size || e.h;
@@ -218,12 +220,13 @@ export function placementCtx(state, p) {
       .map(g => ({ id: g.id, tx: g.tx, ty: g.ty, taken: !!g.building })),
     resources: [...state.ents.values()].filter(e => e.kind === 'resource'),
     explored: (x, y) => pl.explored[y * N + x] === 1,
+    start: pl.start,
   };
 }
 
 // ---------------------------------------------------------------- commands
 
-function msg(state, p, text) { state.events.push({ type: 'msg', player: p, text }); }
+function msg(state, p, text) { state.inbox.push({ type: 'msg', player: p, text }); }
 
 function setOrder(u, order) {
   u.order = order;
@@ -297,6 +300,7 @@ export function issue(state, p, cmd) {
       if (pl.gas < d.cost[1]) { msg(state, p, 'Not enough gas'); return false; }
       const chk = checkPlacement(placementCtx(state, p), cmd.btype, cmd.tx | 0, cmd.ty | 0);
       if (!chk.ok) { msg(state, p, chk.reason); return false; }
+      if (d.dome && [...ents.values()].some(w => w.kind === 'unit' && w.owner === p && w !== u && w.order.type === 'build' && w.order.btype === cmd.btype)) { msg(state, p, `Only one ${d.name} at a time`); return false; }
       const resume = u.order.type === 'gather' ? { res: u.order.res } : null;
       setOrder(u, { type: 'build', btype: cmd.btype, tx: cmd.tx | 0, ty: cmd.ty | 0, phase: 'toSite', bid: 0 });
       u.resume = resume;
@@ -356,6 +360,14 @@ export function issue(state, p, cmd) {
       }
       return false;
     }
+    case 'shield': {
+      const b = ents.get(cmd.building);
+      if (!b || b.dead || b.owner !== p || b.kind !== 'building' || !BUILDINGS[b.type].dome || !b.done) return false;
+      if (pl.dome) { msg(state, p, 'The colony shield is already up'); return false; }
+      if (state.tick < b.rechargeUntil) { msg(state, p, `Shield generator recharging (${Math.ceil((b.rechargeUntil - state.tick) / TICK_RATE)} s)`); return false; }
+      raiseDome(state, p, b);
+      return true;
+    }
     case 'rally': {
       const b = ents.get(cmd.building);
       if (!b || b.dead || b.owner !== p || b.kind !== 'building') return false;
@@ -372,7 +384,7 @@ export function issue(state, p, cmd) {
 
 export function step(state) {
   if (state.over) return;
-  state.events = [];
+  state.events = state.inbox; state.inbox = [];
   state.tick++;
   const units = [], buildings = [];
   for (const e of state.ents.values()) {
@@ -384,6 +396,7 @@ export function step(state) {
   separate(state, units);
   for (const b of buildings) if (!b.dead) updateBuilding(state, b);
   regen(state, units, buildings);
+  updateDomes(state);
   removeDead(state);
   updateSupply(state);
   if (state.tick % 2 === 0) updateVisibility(state);
@@ -443,13 +456,13 @@ function updateUnit(state, u) {
 function combat(state, u, radius, chase) {
   const d = UNITS[u.type];
   let t = u.target ? state.ents.get(u.target) : null;
-  if (t && (t.dead || !isVisibleTo(state, u.owner, t) || gap(u, t) > d.sight + 2 || !canHit(d, t))) { t = null; u.target = 0; }
+  if (t && (t.dead || !isVisibleTo(state, u.owner, t) || reach(state, u, t) > d.sight + 2 || !canHit(d, t))) { t = null; u.target = 0; }
   if (!t && (state.tick + u.id) % 4 === 0) {
     t = findTarget(state, u, radius);
     if (t) u.target = t.id;
   }
   if (!t) return false;
-  if (!chase && gap(u, t) > d.range + 0.05) { u.target = 0; return false; }
+  if (!chase && reach(state, u, t) > d.range + 0.05) { u.target = 0; return false; }
   engage(state, u, t, chase);
   return true;
 }
@@ -460,7 +473,7 @@ function findTarget(state, u, radius) {
   for (const e of state.ents.values()) {
     if (e.dead || e.owner < 0 || e.owner === u.owner || e.kind === 'resource' || !canHit(d, e)) continue;
     if (Math.abs(e.x - u.x) > radius + 3 || Math.abs(e.y - u.y) > radius + 3) continue;
-    const g = gap(u, e);
+    const g = reach(state, u, e);
     if (g > radius || !isVisibleTo(state, u.owner, e)) continue;
     // prefer things that can shoot back, then the nearest
     const threat = (e.kind === 'unit' && UNITS[e.type].damage && !UNITS[e.type].worker) || (e.kind === 'building' && BUILDINGS[e.type].damage) ? 0 : e.kind === 'unit' ? 4 : 8;
@@ -472,7 +485,7 @@ function findTarget(state, u, radius) {
 
 function engage(state, u, t, chase) {
   const d = UNITS[u.type];
-  const g = gap(u, t);
+  const g = reach(state, u, t);
   u.facing = Math.atan2(t.y - u.y, t.x - u.x);
   if (g <= d.range + 0.05) {
     u.path = null;
@@ -482,8 +495,17 @@ function engage(state, u, t, chase) {
   }
 }
 
+// Distance a unit must close to hit t: to t itself, or to the enemy dome wall shielding it.
+function reach(state, u, t) {
+  const g = gap(u, t);
+  const dm = state.domesUp && shieldingDome(state, u, t);
+  return dm ? Math.min(g, Math.hypot(u.x - dm.x, u.y - dm.y) - dm.r - u.radius) : g;
+}
+
 function fire(state, u, t) {
   const d = def(u.type);
+  const dm = state.domesUp && shieldingDome(state, u, t);
+  if (dm) return hitDome(state, u, t, dm, d);
   state.events.push({ type: 'shot', from: u.id, fx: u.x, fy: u.y, tx: t.x, ty: t.y, owner: u.owner, unit: u.type, ranged: !!d.ranged, splash: !!d.splash, fair: !!u.air, tair: !!t.air });
   damage(state, t, d.damage, u);
   if (d.splash) {
@@ -605,6 +627,7 @@ function canOccupy(state, fromX, fromY, x, y) {
 }
 
 function tryMove(state, u, nx, ny) {
+  if (state.domesUp && domeBlocks(state, u, nx, ny)) return false;
   if (u.air) { const N = state.N; u.x = Math.max(0.5, Math.min(N - 0.5, nx)); u.y = Math.max(0.5, Math.min(N - 0.5, ny)); return true; }
   if (canOccupy(state, u.x, u.y, nx, ny)) { u.x = nx; u.y = ny; return true; }
   if (canOccupy(state, u.x, u.y, nx, u.y)) { u.x = nx; return true; }
@@ -898,6 +921,81 @@ function updateSupply(state) {
   for (const pl of state.players) pl.supplyCap = Math.min(MAX_SUPPLY, pl.supplyCap);
 }
 
+// ---------------------------------------------------------------- colony shield
+
+function raiseDome(state, p, gen) {
+  const pl = state.players[p], C = COLONY_SHIELD;
+  pl.dome = { owner: p, gen: gen.id, x: pl.start.x, y: pl.start.y, r: C.radius, hp: C.hp, maxHp: C.hp, until: state.tick + C.duration * TICK_RATE, warned: false, seen: [false, false, false] };
+  state.domesUp = true;
+  // enemy units caught inside are thrown out to the nearest walkable spot beyond the wall
+  for (const u of state.ents.values()) {
+    if (u.kind !== 'unit' || u.dead || u.owner === p || u.hidden) continue;
+    const dx = u.x - pl.dome.x, dy = u.y - pl.dome.y, d = Math.hypot(dx, dy);
+    if (d >= pl.dome.r) continue;
+    const ux = d > 1e-3 ? dx / d : 1, uy = d > 1e-3 ? dy / d : 0;
+    for (let k = pl.dome.r + 0.6; k < pl.dome.r + 12; k += 0.5) {
+      const x = pl.dome.x + ux * k, y = pl.dome.y + uy * k;
+      if (x < 1 || y < 1 || x >= state.N - 1 || y >= state.N - 1) break;
+      if (u.air || state.walk[tileOf(state, x, y)]) { u.x = u.px = x; u.y = u.py = y; u.path = null; break; }
+    }
+  }
+  state.inbox.push({ type: 'dome', what: 'up', player: p, x: pl.dome.x, y: pl.dome.y });
+}
+
+function lowerDome(state, pl, why) {
+  const g = state.ents.get(pl.dome.gen);
+  if (g) g.rechargeUntil = state.tick + COLONY_SHIELD.recharge * TICK_RATE;
+  state.events.push({ type: 'dome', what: why, player: pl.id, x: pl.dome.x, y: pl.dome.y });
+  pl.dome = null;
+  state.domesUp = state.players.some(q => q.dome);
+}
+
+function updateDomes(state) {
+  if (!state.domesUp) return;
+  for (const pl of state.players) {
+    const dm = pl.dome;
+    if (!dm) continue;
+    const g = state.ents.get(dm.gen);
+    if (!pl.alive || !g || g.dead) lowerDome(state, pl, 'lost');
+    else if (dm.hp <= 0) lowerDome(state, pl, 'broken');
+    else if (state.tick >= dm.until) lowerDome(state, pl, 'expired');
+    else if (!dm.warned && dm.until - state.tick <= 15 * TICK_RATE) { dm.warned = true; state.events.push({ type: 'dome', what: 'fading', player: pl.id, x: dm.x, y: dm.y }); }
+  }
+}
+
+const inDome = (dm, x, y) => Math.hypot(x - dm.x, y - dm.y) < dm.r;
+
+// Would this step carry a unit from outside into an enemy's dome?
+function domeBlocks(state, u, nx, ny) {
+  for (const pl of state.players) {
+    const dm = pl.dome;
+    if (dm && pl.id !== u.owner && inDome(dm, nx, ny) && !inDome(dm, u.x, u.y)) return true;
+  }
+  return false;
+}
+
+// The enemy dome standing between a shooter outside it and a target inside it, if any.
+function shieldingDome(state, u, t) {
+  for (const pl of state.players) {
+    const dm = pl.dome;
+    if (dm && pl.id !== u.owner && t.owner === pl.id && inDome(dm, t.x, t.y) && !inDome(dm, u.x, u.y)) return dm;
+  }
+  return null;
+}
+
+function hitDome(state, u, t, dm, d) {
+  // the shot stops where the line from the shooter to the target meets the wall
+  const dx = t.x - u.x, dy = t.y - u.y, fx = u.x - dm.x, fy = u.y - dm.y;
+  const a = dx * dx + dy * dy, b = 2 * (fx * dx + fy * dy), c = fx * fx + fy * fy - dm.r * dm.r;
+  const disc = b * b - 4 * a * c, k = a > 0 && disc >= 0 ? Math.max(0, (-b - Math.sqrt(disc)) / (2 * a)) : 0;
+  const hx = u.x + dx * k, hy = u.y + dy * k;
+  state.events.push({ type: 'shot', from: u.id, fx: u.x, fy: u.y, tx: hx, ty: hy, owner: u.owner, unit: u.type, ranged: !!d.ranged, splash: false, fair: !!u.air, tair: false, dome: true });
+  state.events.push({ type: 'domeHit', player: dm.owner, x: hx, y: hy });
+  dm.hp -= Math.max(0.5, d.damage - COLONY_SHIELD.armor);
+  const pl = state.players[dm.owner];
+  if (state.tick - pl.lastAttackMsg > TICK_RATE * 12) { pl.lastAttackMsg = state.tick; state.events.push({ type: 'attacked', player: dm.owner, x: hx, y: hy }); }
+}
+
 // ---------------------------------------------------------------- fog of war
 
 function circle(state, r) {
@@ -930,6 +1028,18 @@ function updateVisibility(state) {
       const i = y * N + x;
       if (level(elev[i]) > vl) continue;
       vis[i] = 1; ex[i] = 1;
+    }
+  }
+  // Who can see some part of each raised dome's rim?
+  if (state.domesUp) for (const q of state.players) if (q.dome) {
+    const dm = q.dome;
+    for (const pl of state.players) {
+      dm.seen[pl.id] = false;
+      if (!pl.active || pl.id === q.id) continue;
+      for (let k = 0; k < 32 && !dm.seen[pl.id]; k++) {
+        const x = Math.floor(dm.x + Math.cos(k * Math.PI / 16) * (dm.r + 0.5)), y = Math.floor(dm.y + Math.sin(k * Math.PI / 16) * (dm.r + 0.5));
+        if (x >= 0 && y >= 0 && x < N && y < N && pl.visible[y * N + x]) dm.seen[pl.id] = true;
+      }
     }
   }
   // Remember enemy buildings as last seen; forget ones seen to be gone.
@@ -975,7 +1085,7 @@ function snapOwn(e) {
     s.order = { type: e.order.type, res: e.order.res, btype: e.order.btype, tx: e.order.tx, ty: e.order.ty, bid: e.order.bid, target: e.order.target, x: e.order.x, y: e.order.y, phase: e.order.phase };
     s.carry = e.carry ? { ...e.carry } : null; s.target = e.target; s.hidden = e.hidden; s.air = e.air;
   } else {
-    Object.assign(s, { tx: e.tx, ty: e.ty, size: e.size, done: e.done, progress: e.progress, queue: [...e.queue], larva: e.larva, eggs: e.eggs.length, powered: e.powered, rally: e.rally });
+    Object.assign(s, { tx: e.tx, ty: e.ty, size: e.size, done: e.done, progress: e.progress, queue: [...e.queue], larva: e.larva, eggs: e.eggs.length, powered: e.powered, rally: e.rally, rechargeUntil: e.rechargeUntil });
   }
   return s;
 }
@@ -1004,6 +1114,7 @@ export function observe(state, p) {
     mine, enemies, remembered, resources,
     visible: pl.visible.slice(), explored: pl.explored.slice(),
     players: state.players.map(q => ({ id: q.id, active: q.active, alive: q.alive })),
+    domes: state.players.filter(q => q.dome && (q.id === p || pl.explored[Math.floor(q.dome.y) * state.N + Math.floor(q.dome.x)])).map(q => ({ ...q.dome })),
     start: pl.start,
   };
 }

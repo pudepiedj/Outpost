@@ -56,6 +56,7 @@ export const BUILDINGS = {
   depot:     { faction: 'vanguard', name: 'Supply Depot', size: 2, hp: 400, armor: 1, cost: [100, 0], time: 20, supply: 8, sight: 7, key: 'D' },
   barracks:  { faction: 'vanguard', name: 'Barracks', size: 3, hp: 1000, armor: 1, cost: [150, 0], time: 40, produces: ['trooper'], sight: 8, key: 'B' },
   factory:   { faction: 'vanguard', name: 'Factory', size: 3, hp: 1250, armor: 1, cost: [200, 100], time: 50, produces: ['crawler', 'hawk'], sight: 8, key: 'F', requires: ['barracks'] },
+  bulwark:   { faction: 'vanguard', name: 'Bulwark Generator', size: 2, hp: 900, armor: 2, cost: [300, 200], time: 60, sight: 8, key: 'Z', requires: ['hub', 'depot', 'barracks', 'factory', 'refinery', 'turret'], dome: true },
   turret:    { faction: 'vanguard', name: 'Sentry Turret', size: 2, hp: 400, armor: 1, cost: [100, 0], time: 25, sight: 9, key: 'T', requires: ['barracks'], damage: 12, range: 6.5, cooldown: 1.0, antiAir: true, ranged: true },
   refinery:  { faction: 'vanguard', name: 'Refinery', size: 2, hp: 750, armor: 1, cost: [75, 0], time: 25, onGeyser: true, sight: 7, key: 'E' },
 
@@ -63,6 +64,7 @@ export const BUILDINGS = {
   pod:       { faction: 'swarm', name: 'Brood Pod', size: 2, hp: 350, armor: 1, cost: [100, 0], time: 20, supply: 8, creep: 5, sight: 7, key: 'O', regen: 0.4 },
   pit:       { faction: 'swarm', name: 'Spawning Pit', size: 2, hp: 750, armor: 1, cost: [200, 0], time: 40, sight: 7, key: 'P', regen: 0.4 },
   den:       { faction: 'swarm', name: 'Spitter Den', size: 2, hp: 850, armor: 1, cost: [100, 50], time: 30, sight: 7, key: 'D', requires: ['pit'], regen: 0.4 },
+  heart:     { faction: 'swarm', name: 'Carapace Heart', size: 2, hp: 900, armor: 2, cost: [300, 200], time: 60, sight: 8, key: 'Z', requires: ['hive', 'pod', 'pit', 'den', 'extractor', 'thorn'], regen: 0.4, dome: true },
   thorn:     { faction: 'swarm', name: 'Thorn Mound', size: 2, hp: 350, armor: 1, cost: [100, 0], time: 25, sight: 9, key: 'T', requires: ['pit'], regen: 0.4, damage: 14, range: 5.5, cooldown: 1.1, antiAir: true, ranged: true },
   extractor: { faction: 'swarm', name: 'Extractor', size: 2, hp: 750, armor: 1, cost: [25, 0], time: 20, onGeyser: true, sight: 7, key: 'E', regen: 0.4 },
 
@@ -70,6 +72,7 @@ export const BUILDINGS = {
   pylon:     { faction: 'ascendant', name: 'Pylon', size: 2, hp: 200, shield: 200, armor: 1, cost: [100, 0], time: 18, supply: 8, power: 6.5, sight: 7, key: 'P' },
   gateway:   { faction: 'ascendant', name: 'Gateway', size: 3, hp: 500, shield: 500, armor: 1, cost: [150, 0], time: 45, produces: ['warden', 'lancer', 'seraph'], needsPower: true, sight: 8, key: 'G' },
   core:      { faction: 'ascendant', name: 'Core', size: 2, hp: 550, shield: 550, armor: 1, cost: [150, 0], time: 40, needsPower: true, sight: 7, key: 'Y', requires: ['gateway'] },
+  sanctum:   { faction: 'ascendant', name: 'Sanctum Projector', size: 2, hp: 450, shield: 450, armor: 2, cost: [300, 200], time: 60, sight: 8, key: 'Z', requires: ['nexus', 'pylon', 'gateway', 'core', 'assimilator', 'spire'], dome: true },
   spire:     { faction: 'ascendant', name: 'Aegis Spire', size: 2, hp: 250, shield: 250, armor: 1, cost: [125, 0], time: 30, needsPower: true, sight: 9, key: 'T', requires: ['gateway'], damage: 14, range: 6.5, cooldown: 1.2, antiAir: true, ranged: true },
   assimilator: { faction: 'ascendant', name: 'Assimilator', size: 2, hp: 450, shield: 450, armor: 1, cost: [75, 0], time: 25, onGeyser: true, sight: 7, key: 'E' },
 };
@@ -83,6 +86,16 @@ export const SHIELD_REGEN = 2, SHIELD_DELAY = 7;
 export const QUEUE_MAX = 5;
 // Repair: a worker restores a building (or a mechanical unit) at the rate it was built, for this share of its cost.
 export const REPAIR_COST = 0.3;
+// Colony shield (one generator per player): a dome over the main base that enemies can neither enter
+// nor shoot through. Their fire hits the dome instead, until its strength is gone or time runs out.
+export const COLONY_SHIELD = {
+  radius: 12,      // dome radius in tiles, centred on the player's start location
+  placeWithin: 10, // the generator must be built this close to the start location
+  duration: 150,   // seconds the dome lasts if it isn't shot down
+  hp: 6000,        // damage it absorbs before collapsing
+  armor: 1,        // subtracted from every hit on the dome
+  recharge: 150,   // seconds after the dome goes down before it can be raised again
+};
 
 export function def(type) { return UNITS[type] || BUILDINGS[type]; }
 

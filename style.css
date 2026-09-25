@@ -37,6 +37,7 @@ button, select, input { font: inherit; color: inherit; }
 .ico.sup { background: #e8c86a; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
 #rSup.blocked { color: var(--bad); }
 #clock { font-size: 16px; color: var(--dim); font-variant-numeric: tabular-nums; }
+#domeInd { position: absolute; left: 50%; top: 40px; transform: translateX(-50%); font-size: 13px; color: #9fe0ff; border: 1px solid #3a7fae; background: #0d2233cc; border-radius: 4px; padding: 2px 8px; font-variant-numeric: tabular-nums; box-shadow: 0 0 10px #4fb4ff44; }
 .ctl { display: flex; gap: 6px; }
 .ctl button, .ctl select {
   background: var(--panel2); border: 1px solid var(--line2); border-radius: 4px; padding: 3px 10px; font-size: 13px; cursor: pointer;

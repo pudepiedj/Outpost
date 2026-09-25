@@ -49,6 +49,7 @@ export function placementCtxFromObs(obs, map, blocked) {
     geysers: obs.resources.filter(r => r.type === 'geyser').map(r => ({ id: r.id, tx: r.tx, ty: r.ty, taken: r.taken || units.some(w => w.order.type === 'build' && w.order.tx === r.tx && w.order.ty === r.ty) })),
     resources: obs.resources,
     explored: (x, y) => obs.explored[y * N + x] === 1,
+    start: obs.start,
   };
 }
 

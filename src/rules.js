@@ -7,9 +7,10 @@
 //   geysers: [{id, tx, ty, taken}],
 //   resources: [{tx, ty, w, h}], // for the "no base next to minerals" rule
 //   explored(tx, ty) -> bool,  // optional: tile has been seen by this player
+//   start: {x, y},             // optional: the player's start location (for the colony shield)
 // }
 
-import { BUILDINGS, placementRule } from './data.js';
+import { BUILDINGS, placementRule, COLONY_SHIELD } from './data.js';
 import { RAMP } from './map.js';
 
 export function checkPlacement(ctx, type, tx, ty) {
@@ -47,6 +48,10 @@ export function checkPlacement(ctx, type, tx, ty) {
     for (let y = ty; y < ty + s; y++) for (let x = tx; x < tx + s; x++) {
       if (!hasCreep(ctx.ownBuildings, x + 0.5, y + 0.5)) return { ok: false, reason: 'Must be built on creep' };
     }
+  }
+  if (b.dome) {
+    if (ctx.ownBuildings.some(o => o.type === type)) return { ok: false, reason: `Only one ${b.name} at a time` };
+    if (ctx.start && Math.hypot(cx - ctx.start.x, cy - ctx.start.y) > COLONY_SHIELD.placeWithin) return { ok: false, reason: 'Must be built in your main base' };
   }
   if (rule === 'power') {
     if (!isPowered(ctx.ownBuildings, cx, cy)) return { ok: false, reason: 'Must be built in a pylon field' };

@@ -1,7 +1,7 @@
 // Browser front end: menu, game loop, human input, HUD, bot hosting.
 
 import { createGame, step, issue, observe, publicMap, placementCtx } from './sim.js';
-import { TICK_RATE, UNITS, BUILDINGS, FACTIONS, PLAYER_COLORS, PLAYER_NAMES, MAX_SUPPLY, REPAIR_COST, buildingsOf } from './data.js';
+import { TICK_RATE, UNITS, BUILDINGS, FACTIONS, PLAYER_COLORS, PLAYER_NAMES, MAX_SUPPLY, REPAIR_COST, COLONY_SHIELD, buildingsOf } from './data.js';
 import { checkPlacement } from './rules.js';
 import { createRenderer } from './render.js';
 import { BOTS } from './bots/index.js';
@@ -48,6 +48,7 @@ const HELP = [
   ['Left click / drag', 'Select units (drag a box). Shift adds. Double-click selects all of that type on screen.'],
   ['Right click (or Ctrl+click)', 'Move, attack, gather, repair a damaged building with workers, or set a rally point for buildings'],
   ['R, then click', 'Repair a damaged building (workers; Vanguard engineers also fix Crawlers and Hawks)'],
+  ['Colony shield', 'Once every other building type is built, build the shield generator (Z) in your main base. Select it and press D to raise a dome enemies can neither enter nor shoot through, until it fades or is shot down'],
   ['Q then click', 'Gather: send workers to a mineral field or your finished gas building'],
   ['A then click', 'Attack-move (fight anything on the way) or attack a target'],
   ['S / H / M', 'Stop / hold position / move'],
@@ -204,6 +205,11 @@ function handleEvent(ev) {
   if (ev.type === 'msg' && ev.player === H) feed(ev.text, 'warn');
   else if (ev.type === 'attacked' && ev.player === H) { feed(ev.player === H ? 'You are under attack!' : '', 'alert'); G.lastAlert = { x: ev.x, y: ev.y }; }
   else if (ev.type === 'complete' && ev.player === H) feed(`${BUILDINGS[ev.btype].name} complete`, 'good');
+  else if (ev.type === 'dome') {
+    const mine = ev.player === H, who = `${PLAYER_NAMES[ev.player]}'s`;
+    const text = { up: mine ? `Colony shield raised for ${COLONY_SHIELD.duration} s` : `${who} colony shield is up`, fading: mine ? 'Colony shield fading: 15 seconds left' : '', expired: mine ? 'Colony shield has faded' : `${who} colony shield has faded`, broken: mine ? 'Colony shield destroyed!' : `${who} colony shield has been broken`, lost: mine ? 'Colony shield lost with its generator' : '' }[ev.what];
+    if (text) feed(text, mine ? (ev.what === 'up' ? 'good' : 'alert') : 'warn');
+  }
   else if (ev.type === 'eliminated') {
     feed(`${PLAYER_NAMES[ev.player]} (${FACTIONS[st.players[ev.player].faction].name}) has been eliminated`, ev.player === H ? 'alert' : 'good');
     if (ev.player === H && !st.over) {
@@ -428,7 +434,7 @@ function cardButtons() {
     out.push({ key: 'M', glyph: 'MOVE', name: 'Move', tip: 'Move to a point, ignoring enemies', act: () => { G.mode = { type: 'move' }; }, active: G.mode?.type === 'move' });
     out.push({ key: 'S', glyph: 'STOP', name: 'Stop', tip: 'Stop and stand ready', act: () => cmd({ type: 'stop', units: units.map(u => u.id) }) });
     out.push({ key: 'A', glyph: 'ATK', name: 'Attack', tip: 'Click a target, or ground to attack-move', act: () => { G.mode = { type: 'attack' }; }, active: G.mode?.type === 'attack' });
-    out.push({ key: 'H', glyph: 'HOLD', name: 'Hold position', tip: 'Stay put and fire at anything in range', act: () => cmd({ type: 'hold', units: units.map(u => u.id) }) });
+    if (!units.every(u => UNITS[u.type].worker)) out.push({ key: 'H', glyph: 'HOLD', name: 'Hold position', tip: 'Stay put and fire at anything in range', act: () => cmd({ type: 'hold', units: units.map(u => u.id) }) });
     if (units.some(u => UNITS[u.type].worker)) {
       out.push({ key: 'R', glyph: 'REPAIR', name: 'Repair', tip: `Click a damaged building of yours${pl.faction === 'vanguard' ? ' or a Crawler/Hawk' : ''}. Restores it at its build speed for ${Math.round(REPAIR_COST * 100)}% of its cost. Right-click does the same. Several workers repair faster.`, act: () => { G.mode = { type: 'repair' }; }, active: G.mode?.type === 'repair' });
       out.push({ key: 'Q', glyph: 'GATHER', name: 'Gather', tip: 'Click a mineral field, or your finished gas building (refinery/extractor/assimilator). Same as right-click or Ctrl+click on it.', act: () => { G.mode = { type: 'gather' }; }, active: G.mode?.type === 'gather' });
@@ -462,6 +468,15 @@ function cardButtons() {
       });
     }
     const b0 = blds[0];
+    if (bd.dome && b0.done) {
+      const pl = st.players[H], wait = Math.ceil((b0.rechargeUntil - st.tick) / TICK_RATE);
+      const C = COLONY_SHIELD;
+      out.push({
+        key: 'D', glyph: 'SHIELD', name: 'Raise colony shield', dis: !!pl.dome || wait > 0,
+        tip: pl.dome ? 'The shield is already up' : wait > 0 ? `Recharging: ready in ${wait} s` : `A dome over your main base (radius ${C.radius}) for ${C.duration} s. Enemies can't enter it or shoot through it; their fire hits the dome instead (${C.hp} strength). Your own units come and go and fire out freely. Recharges for ${C.recharge} s after it falls.`,
+        act: () => cmd({ type: 'shield', building: b0.id }),
+      });
+    }
     if (!b0.done || b0.queue.length || b0.eggs.length) out.push({ key: 'X', glyph: 'CANCEL', name: b0.done ? 'Cancel last' : 'Cancel construction', tip: b0.done ? 'Cancel the last unit in the queue (full refund)' : 'Cancel this building (75% refund)', act: () => cmd({ type: 'cancel', building: b0.id }), slot: 11 });
   }
   return out;
@@ -533,6 +548,9 @@ function updateHud() {
   $('rSup').textContent = pl ? `${fmtSup(pl.supplyUsed)}/${pl.supplyCap}` : '—';
   $('rSup').classList.toggle('blocked', !!pl && pl.supplyUsed >= pl.supplyCap && pl.supplyCap < MAX_SUPPLY);
   $('clock').textContent = fmtTime(st.tick / TICK_RATE);
+  const dm = pl && pl.dome;
+  $('domeInd').classList.toggle('hidden', !dm);
+  if (dm) $('domeInd').textContent = `Shield ${fmtTime((dm.until - st.tick) / TICK_RATE)} · ${Math.ceil(100 * dm.hp / dm.maxHp)}%`;
   renderCard();
   renderInfo();
 }
@@ -593,6 +611,10 @@ function statusText(e) {
     if (d.larva) bits.push(`Larvae <b>${e.larva}/3</b>${e.eggs.length ? ` · ${e.eggs.length} egg${e.eggs.length > 1 ? 's' : ''}` : ''}`);
     if (d.supply) bits.push(`Provides ${d.supply} supply`);
     if (e.queue.length) bits.push(`Training ${UNITS[e.queue[0]].name}`);
+    if (d.dome) {
+      const dm = st.players[e.owner].dome, wait = Math.ceil((e.rechargeUntil - st.tick) / TICK_RATE);
+      bits.push(dm ? `<span style="color:#7fd3ff">Shield up: ${fmtTime((dm.until - st.tick) / TICK_RATE)} left, strength ${Math.ceil(dm.hp)}/${dm.maxHp}</span>` : wait > 0 ? `Recharging: ${fmtTime(wait)}` : '<span style="color:#7fd3ff">Shield ready (D)</span>');
+    }
     return bits.join(' · ') || 'Ready';
   }
   const o = e.order;

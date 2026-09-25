@@ -57,6 +57,15 @@ Flyers cross cliffs and see up onto high ground. Only ranged units, towers and o
 Crawlers, Biters, Wardens and workers can't. Any worker can repair its own buildings (R); Vanguard engineers
 can also repair Crawlers and Hawks. Repair runs at build speed and costs 30% of the price for a full repair.
 
+**Colony shield.** Once you have built every other building type of your faction, you can build its shield
+generator (Bulwark Generator, Carapace Heart or Sanctum Projector; key Z) inside your main base. Only one can
+exist at a time. Select it and press **D** to raise a shimmering dome over the main base (not expansions).
+Enemies can't enter it or shoot through it. Their fire hits the dome and wears down its strength instead,
+and the generator shows through the dome, so they know what to aim for. Your own units come and go and
+fire out freely. The dome falls when its strength is gone or its time runs out, and the generator then
+recharges before it can be raised again. All the numbers are in `COLONY_SHIELD` in `src/data.js`
+(defaults: radius 12, 150 s, 6000 strength, armour 1, 150 s recharge).
+
 Resources: minerals (mined from crystal fields) and gas (needs a refinery/extractor/assimilator on a geyser).
 You lose when all of your buildings are destroyed. The last player standing wins.
 
@@ -109,6 +118,7 @@ In the browser each bot runs in its own Web Worker.
 | `resources` | mineral fields and geysers on explored tiles (`amount` only if visible) |
 | `visible`, `explored` | `Uint8Array(size*size)`, row-major |
 | `players` | `{id, active, alive}` for each slot |
+| `domes` | raised colony shields you know of: `{owner, x, y, r, hp, maxHp, until}` |
 
 **Commands** (`units` is an array of your unit ids):
 
@@ -123,6 +133,8 @@ In the browser each bot runs in its own Web Worker.
 { type: 'train', building, utype }
 { type: 'cancel', building }
 { type: 'rally', building, x, y, target? }
+{ type: 'repair', units, target }          // own damaged building (or Vanguard mech unit)
+{ type: 'shield', building }               // raise the colony shield from your generator
 ```
 
 Invalid commands are rejected by the simulation, which is the only authority. `src/rules.js`
