@@ -7,6 +7,7 @@ import { findBuildSpot } from './bots/placement.js';
 
 const IDLE_GRACE = 48;      // ticks (3 s) a worker may stand idle near a base before being sent to mine
 const HOME_RADIUS = 14;     // only idle workers this close to one of your bases are touched
+const RESERVE = 125;        // minerals the assist leaves for the player once the economy is going
 
 export function createAssist({ player, faction, map }) {
   const F = FACTIONS[faction];
@@ -95,20 +96,24 @@ export function createAssist({ player, faction, map }) {
           if (pick.length) cmds.push({ type: 'gather', units: pick.map(w => w.id), target: g.id });
         }
 
-        // 3. Keep bases training workers up to a sensible number.
+        // 3. Keep bases training workers up to a sensible number: two per mineral patch plus three per gas.
+        // Past the first dozen it only spends money above a reserve, so the player can always afford
+        // a building, a tower or army too.
         const sites = [];
         for (const b of bases) if (mineralsNear(b).length && !sites.some(x => d2(x, b) < 8)) sites.push(b);
-        const target = Math.min(70, 20 * Math.max(1, sites.length) + 3 * gasBlds.length);
+        const patchCount = sites.reduce((n, b) => n + mineralsNear(b).length, 0);
+        const target = Math.min(60, Math.max(8, 2 * patchCount) + 3 * gasBlds.length);
         while (dronesPending.length && obs.tick - dronesPending[0] > UNITS.drone.time * 16 + 8) dronesPending.shift();
         let have = workers.length + dronesPending.length + blds.reduce((n, b) => n + b.queue.filter(t => UNITS[t].worker).length, 0);
         const wd = UNITS[F.worker];
+        const reserve = have < 12 ? 0 : RESERVE;
         for (const b of bases) {
-          if (have >= target || supplyFree < wd.supply || !afford(wd.cost)) break;
+          if (have >= target || supplyFree < wd.supply || minerals - wd.cost[0] < reserve || !afford(wd.cost)) break;
           if (BUILDINGS[b.type].larva) {
-            // use any larva while the economy is well short; otherwise leave one for the player's army
-            if (b.larva < (have < target * 0.75 ? 1 : 2)) continue;
+            // never take the last larva: the player needs them for everything else
+            if (b.larva < (have < 8 ? 1 : 2)) continue;
             dronesPending.push(obs.tick);
-          } else if (b.queue.length > 1) continue; // keep one queued so production never pauses
+          } else if (b.queue.length > 0) continue;
           cmds.push({ type: 'train', building: b.id, utype: F.worker });
           spend(wd.cost); supplyFree -= wd.supply; have++;
         }

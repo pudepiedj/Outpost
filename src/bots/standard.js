@@ -12,7 +12,9 @@ import { findBuildSpot, knownBlocked, placementCtxFromObs } from './placement.js
 export const STYLES = {
   balanced: { label: 'Balanced', workers: 18, gasAt: 12, firstWave: 12, waveGrowth: 4, scoutAt: 9, expandAt: 36 },
   rush:     { label: 'Rush',     workers: 12, gasAt: 99, firstWave: 6,  waveGrowth: 3, scoutAt: 8, expandAt: 50 },
-  easy:     { label: 'Easy',     workers: 12, gasAt: 14, firstWave: 18, waveGrowth: 8, scoutAt: 12, expandAt: 60, slow: true },
+  // Easy: a small economy, one production building, no attacks before minute 9, small capped waves
+  // and a long pause after each one, so a human has time to build up.
+  easy:     { label: 'Easy',     workers: 10, gasAt: 10, firstWave: 8,  waveGrowth: 2, scoutAt: 12, expandAt: 999, slow: true, attackAfter: 540, maxWave: 12, restAfter: 180 },
 };
 
 const BUILD_ORDERS = {
@@ -42,7 +44,7 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
   let home = null, rally = null;
   let scoutId = 0, scoutDone = false, scoutQueue = [];
   let attacking = false, wave = S.firstWave, target = null;
-  let expander = 0;
+  let expander = 0, restUntil = 0;
 
   const d2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
@@ -137,7 +139,7 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
       }
       if (baseSites.length < wantBases && !building) expand();
       // spare money: more production
-      if (minerals > 450 && !building && producers < (S.slow ? 2 : 6)) {
+      if (minerals > 450 && !building && producers < (S.slow ? 1 : 6)) {
         const extra = faction === 'swarm' ? 'hive' : faction === 'vanguard' ? (doneOf('factory') && producers % 3 === 2 ? 'factory' : 'barracks') : 'gateway';
         if (reqOk(extra)) tryBuild(extra);
       }
@@ -159,6 +161,7 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
           while (larva > 0) {
             let t = null;
             if (wantWorkers && dronesQueued < 2 && (threats.length === 0 || army.length > 6)) t = 'drone';
+            else if (S.maxWave && army.length >= S.maxWave + 4) break;
             else t = pickArmyUnit(bd.produces);
             if (!t) break;
             const d = UNITS[t];
@@ -171,6 +174,7 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
           continue;
         }
         if (bd.base || !bd.produces) continue;
+        if (S.maxWave && army.length >= (S.maxWave + 4)) continue;
         if (b.queue.length >= (minerals > 600 && !S.slow ? 2 : 1) || !b.powered) continue;
         const t = pickArmyUnit(bd.produces);
         if (!t) continue;
@@ -312,10 +316,12 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
           if (idle.length) sendTo({ x: t.x, y: t.y });
           return;
         }
-        if (!attacking && army.length >= wave) { attacking = true; target = null; }
+        const rested = !S.attackAfter || (obs.tick >= S.attackAfter * 16 && obs.tick >= restUntil);
+        if (!attacking && army.length >= wave && rested) { attacking = true; target = null; }
         if (attacking) {
           if (army.length < Math.max(3, wave * 0.35)) {
-            attacking = false; wave = Math.min(40, wave + S.waveGrowth); target = null;
+            attacking = false; wave = Math.min(S.maxWave || 40, wave + S.waveGrowth); target = null;
+            if (S.restAfter) restUntil = obs.tick + S.restAfter * 16;
             sendTo(rally, 'move');
             return;
           }

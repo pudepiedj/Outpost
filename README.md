@@ -11,7 +11,8 @@ The core rule from the original is kept: **you see only what your units and buil
 - **Clear:** currently visible.
 - Low ground cannot see up cliffs. High ground can see down.
 
-Every player slot can be **Human**, **Human + economy assist**, **Bot** or **Empty**. Bots receive exactly the same fog-filtered
+Every player slot can be **Human**, **Human + economy assist**, **Bot** (Easy, Balanced or Rush) or **Empty**.
+Easy bots keep a small economy, never attack before minute 9, send small waves and rest for three minutes after each. Bots receive exactly the same fog-filtered
 view a human does. They cannot see the full game state.
 
 ## Running it
@@ -29,8 +30,9 @@ or Web Workers from `file://`.
 
 With **Human + economy assist**, two switches appear in the top bar:
 
-- **Auto-workers:** keeps every base training workers (up to about 20 per base plus 3 per gas
-  building), sends workers idle for 3 seconds near a base back to mining, puts 3 workers on each
+- **Auto-workers:** keeps every base training workers until each mineral line is saturated (two per
+  mineral patch plus 3 per gas building). Once you have a dozen workers it only spends minerals above a
+  reserve of 125, and it never takes a Swarm Hive's last larva, so the rest of your income is yours. It also sends workers idle for 3 seconds near a base back to mining, puts 3 workers on each
   new gas building once, and sends two or three workers to repair damaged buildings near your bases.
 - **Auto-supply:** builds Depots / Brood Pods / Pylons early enough that every production building
   can keep working, and saves up for them before spending on workers.

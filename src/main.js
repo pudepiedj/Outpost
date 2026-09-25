@@ -59,7 +59,7 @@ const HELP = [
   ['Backspace / Tab', 'Jump to your base / to the latest alert'],
   ['Space, − / =', 'Pause, slower / faster'],
   ['Esc', 'Cancel targeting or placement'],
-  ['Auto-workers / Auto-supply', 'Top-bar switches (on with "Human + economy assist"): keep training workers, send idle ones near base back to mining, staff new gas buildings, repair damaged buildings near your bases, and build supply before you are blocked'],
+  ['Auto-workers / Auto-supply', 'Top-bar switches (on with "Human + economy assist"): keep training workers until the mineral lines are full (always leaving you 125 minerals), send idle ones near base back to mining, staff new gas buildings, repair damaged buildings near your bases, and build supply before you are blocked'],
 ];
 
 $('reseed').onclick = () => { $('seed').value = 1 + Math.floor(Math.random() * 999999); };
