@@ -6,7 +6,7 @@
 //   observe(state, player);           // fog-filtered view: all a bot is ever given
 
 import {
-  TICK_RATE, DT, MAX_SUPPLY, FACTIONS, UNITS, BUILDINGS, MAP_SIZES, def,
+  TICK_RATE, DT, MAX_SUPPLY, SUPPLY_PER_BASE, FACTIONS, UNITS, BUILDINGS, MAP_SIZES, def,
   MINE_TIME, MINE_AMOUNT, GAS_TIME, GAS_AMOUNT, LARVA_TIME, LARVA_MAX,
   SHIELD_REGEN, SHIELD_DELAY, QUEUE_MAX, REPAIR_COST, COLONY_SHIELD, FORD_SPEED, WEATHER, WEATHER_CALM_START, canHit,
 } from './data.js';
@@ -355,7 +355,7 @@ export function issue(state, p, cmd) {
       const supply = d.supply * (d.count || 1);
       if (pl.minerals < d.cost[0]) { msg(state, p, 'Not enough minerals'); return false; }
       if (pl.gas < d.cost[1]) { msg(state, p, 'Not enough gas'); return false; }
-      if (pl.supplyUsed + supply > pl.supplyCap + 1e-9) { msg(state, p, pl.supplyCap >= MAX_SUPPLY ? 'Supply maximum reached' : 'Not enough supply — build more ' + BUILDINGS[FACTIONS[pl.faction].supply].name + 's'); return false; }
+      if (pl.supplyUsed + supply > pl.supplyCap + 1e-9) { msg(state, p, pl.supplyCap >= pl.supplyMax ? (pl.supplyMax < (MAP_SIZES[state.mapSize] || MAP_SIZES.medium).supplyMax ? 'Supply maximum reached: hold more bases to raise it' : 'Supply maximum reached') : 'Not enough supply — build more ' + BUILDINGS[FACTIONS[pl.faction].supply].name + 's'); return false; }
       if (bd.larva) {
         if (b.larva <= 0) { msg(state, p, 'No larvae available'); return false; }
         b.larva--; b.eggs.push({ type: cmd.utype, t: 0 });
@@ -953,6 +953,8 @@ function regen(state, units, buildings) {
 }
 
 function updateSupply(state) {
+  const sizeMax = (MAP_SIZES[state.mapSize] || MAP_SIZES.medium).supplyMax;
+  const sites = state.players.map(() => []);
   for (const pl of state.players) { pl.supplyUsed = 0; pl.supplyCap = 0; }
   for (const e of state.ents.values()) {
     if (e.owner < 0) continue;
@@ -960,11 +962,16 @@ function updateSupply(state) {
     if (e.kind === 'unit') pl.supplyUsed += UNITS[e.type].supply;
     else if (e.kind === 'building') {
       if (e.done) pl.supplyCap += BUILDINGS[e.type].supply || 0;
+      if (e.done && BUILDINGS[e.type].base && !sites[e.owner].some(b => Math.hypot(b.x - e.x, b.y - e.y) < 8)) sites[e.owner].push(e);
       for (const t of e.queue) pl.supplyUsed += UNITS[t].supply * (UNITS[t].count || 1);
       for (const eg of e.eggs) pl.supplyUsed += UNITS[eg.type].supply * (UNITS[eg.type].count || 1);
     }
   }
-  for (const pl of state.players) pl.supplyCap = Math.min(MAX_SUPPLY, pl.supplyCap);
+  for (const pl of state.players) {
+    // the ceiling grows with territory: every extra base site you hold, up to the map's limit
+    pl.supplyMax = Math.min(sizeMax, MAX_SUPPLY + SUPPLY_PER_BASE * Math.max(0, sites[pl.id].length - 1));
+    pl.supplyCap = Math.min(pl.supplyMax, pl.supplyCap);
+  }
 }
 
 // ---------------------------------------------------------------- colony shield
@@ -1176,7 +1183,7 @@ export function observe(state, p) {
   const remembered = [...pl.memory.values()].filter(g => !visibleIds.has(g.id)).map(g => ({ ...g }));
   return {
     tick: state.tick, player: p, faction: pl.faction,
-    minerals: pl.minerals, gas: pl.gas, supplyUsed: pl.supplyUsed, supplyCap: pl.supplyCap,
+    minerals: pl.minerals, gas: pl.gas, supplyUsed: pl.supplyUsed, supplyCap: pl.supplyCap, supplyMax: pl.supplyMax,
     mine, enemies, remembered, resources,
     visible: pl.visible.slice(), explored: pl.explored.slice(),
     players: state.players.map(q => ({ id: q.id, active: q.active, alive: q.alive })),

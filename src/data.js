@@ -2,14 +2,17 @@
 
 export const TICK_RATE = 16;          // simulation ticks per game second
 export const DT = 1 / TICK_RATE;
-export const MAX_SUPPLY = 100;
+export const MAX_SUPPLY = 100;          // supply ceiling with one base
+// Territory raises the ceiling: each extra finished base (at a separate site) adds SUPPLY_PER_BASE,
+// up to the map size's supplyMax.
 export const MAP_SIZE = 112;          // tiles per side ("medium"), the default
 // Bigger maps have more possible start locations than players, so you have to search for the enemy.
 export const MAP_SIZES = {
-  medium: { name: 'Medium', size: 112, starts: 3 },
-  large:  { name: 'Large',  size: 176, starts: 5 },
-  huge:   { name: 'Huge',   size: 240, starts: 6 },
+  medium: { name: 'Medium', size: 112, starts: 3, supplyMax: 100 },
+  large:  { name: 'Large',  size: 176, starts: 5, supplyMax: 150 },
+  huge:   { name: 'Huge',   size: 240, starts: 6, supplyMax: 200 },
 };
+export const SUPPLY_PER_BASE = 25;
 
 export const PLAYER_COLORS = ['#4f8cff', '#ff5a4f', '#3ecf6e'];
 export const PLAYER_NAMES = ['Blue', 'Red', 'Green'];

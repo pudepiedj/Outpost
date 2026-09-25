@@ -73,6 +73,12 @@ rain (a little slower, sight −1), snow (slower, flyers slightly slower, sight 
 storms (slower, flyers much slower, sight −3). The current weather and the next one are shown next to the
 clock. Settings: `WEATHER` and `FORD_SPEED` in `src/data.js`.
 
+**Supply ceiling.** Your first base allows up to 100 supply. Every extra base you hold raises the ceiling by 25,
+up to 100 on Medium maps, 150 on Large and 200 on Huge. A base means a finished Command Hub, Hive or Nexus at least
+8 tiles from your others (a second Hive next to the first, for larvae, doesn't count). Lose a base and the ceiling
+drops again. You still need Depots, Brood Pods or Pylons to use the room. Hover over the supply figure in the top
+bar to see your current ceiling.
+
 **Colony shield.** Once you have built every other building type of your faction, you can build its shield
 generator (Bulwark Generator, Carapace Heart or Sanctum Projector; key Z) inside your main base. Only one can
 exist at a time. Select it and press **D** to raise a shimmering dome over the main base (not expansions).

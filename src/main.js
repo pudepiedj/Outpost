@@ -1,7 +1,7 @@
 // Browser front end: menu, game loop, human input, HUD, bot hosting.
 
 import { createGame, step, issue, observe, publicMap, placementCtx } from './sim.js';
-import { TICK_RATE, UNITS, BUILDINGS, FACTIONS, PLAYER_COLORS, PLAYER_NAMES, MAX_SUPPLY, REPAIR_COST, COLONY_SHIELD, MAP_SIZES, WEATHER, buildingsOf } from './data.js';
+import { TICK_RATE, UNITS, BUILDINGS, FACTIONS, PLAYER_COLORS, PLAYER_NAMES, REPAIR_COST, COLONY_SHIELD, MAP_SIZES, SUPPLY_PER_BASE, WEATHER, buildingsOf } from './data.js';
 import { checkPlacement } from './rules.js';
 import { createRenderer } from './render.js';
 import { BOTS } from './bots/index.js';
@@ -558,7 +558,8 @@ function updateHud() {
   $('rMin').textContent = pl ? Math.floor(pl.minerals) : '—';
   $('rGas').textContent = pl ? Math.floor(pl.gas) : '—';
   $('rSup').textContent = pl ? `${fmtSup(pl.supplyUsed)}/${pl.supplyCap}` : '—';
-  $('rSup').classList.toggle('blocked', !!pl && pl.supplyUsed >= pl.supplyCap && pl.supplyCap < MAX_SUPPLY);
+  $('rSup').title = pl ? `Supply used / provided. Ceiling ${pl.supplyMax}: each extra base you hold raises it by ${SUPPLY_PER_BASE}, up to ${MAP_SIZES[st.mapSize].supplyMax} on this map.` : '';
+  $('rSup').classList.toggle('blocked', !!pl && pl.supplyUsed >= pl.supplyCap && pl.supplyCap < pl.supplyMax);
   $('clock').textContent = fmtTime(st.tick / TICK_RATE);
   const w = st.weather, wd = WEATHER[w.type], left = (w.until - st.tick) / TICK_RATE;
   $('weatherInd').innerHTML = `<b>${wd.name}</b>${weatherEffects(wd)} · ${left < 30 ? `<span style="color:#e8c86a">${WEATHER[w.next].name} in ${fmtTime(left)}</span>` : `then ${WEATHER[w.next].name}`}`;

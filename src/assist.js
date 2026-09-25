@@ -2,7 +2,7 @@
 // It uses the same fog-filtered observe() view and the same commands as any player, so it can't
 // do anything the human couldn't. The human keeps full control and can override it at any time.
 
-import { UNITS, BUILDINGS, FACTIONS, MAX_SUPPLY } from './data.js';
+import { UNITS, BUILDINGS, FACTIONS } from './data.js';
 import { findBuildSpot } from './bots/placement.js';
 
 const IDLE_GRACE = 48;      // ticks (3 s) a worker may stand idle near a base before being sent to mine
@@ -41,7 +41,7 @@ export function createAssist({ player, faction, map }) {
       const gasBlds = blds.filter(b => BUILDINGS[b.type].onGeyser && b.done);
 
       // Supply first: a supply block stalls everything, workers included.
-      if (assist.supply && obs.supplyCap < MAX_SUPPLY && obs.supplyUsed >= 6 && obs.tick - lastSupplyTry > 16 * 2) {
+      if (assist.supply && obs.supplyCap < obs.supplyMax && obs.supplyUsed >= 6 && obs.tick - lastSupplyTry > 16 * 2) {
         // Supply already on its way, from unfinished buildings and workers walking to a site.
         const pending = blds.reduce((n, b) => n + (!b.done ? BUILDINGS[b.type].supply || 0 : 0), 0) +
           workers.reduce((n, w) => n + (w.order.type === 'build' && !w.order.bid ? BUILDINGS[w.order.btype].supply || 0 : 0), 0);
@@ -49,7 +49,7 @@ export function createAssist({ player, faction, map }) {
         const sd = BUILDINGS[F.supply];
         // keep enough headroom for every production building to keep working while supply is built
         const headroom = 4 + producers * 3;
-        const need = obs.supplyCap + pending < Math.min(MAX_SUPPLY, obs.supplyUsed + headroom);
+        const need = obs.supplyCap + pending < Math.min(obs.supplyMax, obs.supplyUsed + headroom);
         if (need && !afford(sd.cost)) spend(sd.cost); // save up: don't spend the money on workers meanwhile
         else if (need) {
           const home = bases[0];

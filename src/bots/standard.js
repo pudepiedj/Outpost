@@ -5,7 +5,7 @@
 //   export function createBot({ player, faction, map, style }) -> { onTick(obs) -> command[] }
 // onTick is called about four times per game second. See README.md for the obs/command formats.
 
-import { UNITS, BUILDINGS, FACTIONS, MAX_SUPPLY, MINERAL_AMOUNT } from '../data.js';
+import { UNITS, BUILDINGS, FACTIONS, MINERAL_AMOUNT } from '../data.js';
 import { checkPlacement } from '../rules.js';
 import { findBuildSpot, knownBlocked, placementCtxFromObs, reachable } from './placement.js';
 
@@ -134,7 +134,7 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
       const supplyPending = blds.some(b => !b.done && (BUILDINGS[b.type].supply || 0) > 0) ||
         units.some(w => w.order.type === 'build' && !w.order.bid && (BUILDINGS[w.order.btype].supply || 0) > 0);
       const producers = blds.filter(b => (BUILDINGS[b.type].produces || []).some(t => !UNITS[t].worker)).length;
-      if (obs.supplyCap < MAX_SUPPLY && !supplyPending && supplyFree <= 3 + producers * 2 && obs.supplyUsed >= 8) {
+      if (obs.supplyCap < obs.supplyMax && !supplyPending && supplyFree <= 3 + producers * 2 && obs.supplyUsed >= 8) {
         tryBuild(F.supply);
       }
       // build order
@@ -455,7 +455,7 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
           return;
         }
         const rested = !S.attackAfter || (obs.tick >= S.attackAfter * 16 && obs.tick >= restUntil);
-        const maxed = obs.supplyUsed >= Math.min(obs.supplyCap, MAX_SUPPLY) - 3 && obs.supplyCap >= MAX_SUPPLY - 4; // can't grow: go with what we have
+        const maxed = obs.supplyUsed >= Math.min(obs.supplyCap, obs.supplyMax) - 3 && obs.supplyCap >= obs.supplyMax - 4; // can't grow: go with what we have
         if (!attacking && (army.length >= wave || (maxed && army.length >= 6)) && rested) { attacking = true; target = null; }
         if (attacking) {
           if (army.length < Math.max(3, Math.min(wave, maxed ? army.length + 1 : wave) * 0.35)) {
