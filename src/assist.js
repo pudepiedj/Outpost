@@ -21,6 +21,8 @@ export function createAssist({ player, faction, map }) {
   const assist = {
     workers: true,
     supply: true,
+    hold: [0, 0],
+    keep: 0, // a worker the player has waiting at a site: leave it alone
     onTick(obs) {
       const cmds = [];
       const units = obs.mine.filter(e => e.kind === 'unit');
@@ -30,9 +32,8 @@ export function createAssist({ player, faction, map }) {
       if (!bases.length) return cmds;
 
       let minerals = obs.minerals, gas = obs.gas, supplyFree = obs.supplyCap - obs.supplyUsed;
-      for (const w of workers) if (w.order.type === 'build' && w.order.phase === 'toSite' && !w.order.bid) {
-        const c = BUILDINGS[w.order.btype].cost; minerals -= c[0]; gas -= c[1];
-      }
+      // money the player has set aside for a building they are placing or waiting to afford is off limits
+      minerals -= assist.hold[0]; gas -= assist.hold[1];
       const afford = c => minerals >= c[0] && gas >= c[1];
       const spend = c => { minerals -= c[0]; gas -= c[1]; };
 
@@ -59,7 +60,7 @@ export function createAssist({ player, faction, map }) {
             const site = { x: spot.tx + sd.size / 2, y: spot.ty + sd.size / 2 };
             // prefer a miner; if nobody is mining (fields run dry), any worker not already building will do
             let pool = workers.filter(w => w.order.type === 'gather' && !w.hidden);
-            if (!pool.length) pool = workers.filter(w => (w.order.type === 'idle' || w.order.type === 'move') && !w.hidden);
+            if (!pool.length) pool = workers.filter(w => (w.order.type === 'idle' || w.order.type === 'move') && !w.hidden && w.id !== assist.keep);
             const w = (pool.some(w => !w.carry) ? pool.filter(w => !w.carry) : pool).sort((a, b) => d2(a, site) - d2(b, site))[0];
             if (w) {
               const key = `${F.supply}:${spot.tx},${spot.ty}`;
@@ -77,7 +78,7 @@ export function createAssist({ player, faction, map }) {
         const load = new Map();
         for (const w of workers) if (w.order.type === 'gather') load.set(w.order.res, (load.get(w.order.res) || 0) + 1);
         for (const w of workers) {
-          if (w.order.type !== 'idle' || w.hidden) { idleSince.delete(w.id); continue; }
+          if (w.order.type !== 'idle' || w.hidden || w.id === assist.keep) { idleSince.delete(w.id); continue; }
           if (!idleSince.has(w.id)) { idleSince.set(w.id, obs.tick); continue; }
           if (obs.tick - idleSince.get(w.id) < IDLE_GRACE) continue;
           if (!bases.some(b => d2(b, w) < HOME_RADIUS)) continue;

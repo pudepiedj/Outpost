@@ -571,6 +571,14 @@ export function createRenderer(canvas, mini, state) {
       ctx.strokeStyle = '#d8ffe0'; ctx.lineWidth = 1.5; line(bx, by, bx, by - 16 * z);
       ctx.fillStyle = '#7dff8c'; poly([[bx, by - 16 * z], [bx + 10 * z, by - 12.5 * z + Math.sin(now * 5) * z], [bx, by - 9 * z]]); ctx.fill();
     }
+    if (ui.pending && ui.player >= 0) { // a building queued until it can be afforded
+      const { btype, tx, ty } = ui.pending, s = BUILDINGS[btype].size;
+      ctx.setLineDash([6, 4]); ctx.strokeStyle = `rgba(255,215,110,${0.6 + 0.3 * Math.sin(now * 4)})`; ctx.lineWidth = 2; ctx.fillStyle = 'rgba(255,215,110,0.12)';
+      poly([P(tx, ty), P(tx + s, ty), P(tx + s, ty + s), P(tx, ty + s)]); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+      const [lx, ly] = P(tx + s / 2, ty + s / 2);
+      ctx.font = `600 ${Math.round(11 * Math.max(0.8, z))}px system-ui`; ctx.textAlign = 'center'; ctx.fillStyle = '#ffd76e';
+      ctx.fillText(`${BUILDINGS[btype].name}: waiting for funds`, lx, ly);
+    }
     if (ui.dragRect) {
       const { x0, y0, x1, y1 } = ui.dragRect;
       ctx.strokeStyle = '#6dff8a'; ctx.lineWidth = 1; ctx.fillStyle = 'rgba(80,255,120,0.08)';

@@ -60,6 +60,7 @@ export function createGame({ seed = 1, slots, mapSize = 'medium' }) {
       minerals: 50, gas: 0, supplyUsed: 0, supplyCap: 0,
       visible: new Uint8Array(N * N), explored: new Uint8Array(N * N),
       memory: new Map(), start: null, lastAttackMsg: -1e9, dome: null,
+      reserved: new Map(), // worker id -> build order paid for but not yet placed
       stats: { mined: 0, gasMined: 0, unitsBuilt: 0, kills: 0, losses: 0 },
     };
     state.players.push(player);
@@ -331,7 +332,11 @@ export function issue(state, p, cmd) {
       if (!chk.ok) { msg(state, p, chk.reason); return false; }
       if (d.dome && [...ents.values()].some(w => w.kind === 'unit' && w.owner === p && w !== u && w.order.type === 'build' && w.order.btype === cmd.btype)) { msg(state, p, `Only one ${d.name} at a time`); return false; }
       const resume = u.order.type === 'gather' ? { res: u.order.res } : null;
-      setOrder(u, { type: 'build', btype: cmd.btype, tx: cmd.tx | 0, ty: cmd.ty | 0, phase: 'toSite', bid: 0 });
+      const order = { type: 'build', btype: cmd.btype, tx: cmd.tx | 0, ty: cmd.ty | 0, phase: 'toSite', bid: 0, paid: true };
+      setOrder(u, order);
+      // pay now, so nothing else can spend the money while the worker walks there; refunded if it never gets built
+      pl.minerals -= d.cost[0]; pl.gas -= d.cost[1];
+      pl.reserved.set(u.id, { order, cost: d.cost });
       u.resume = resume;
       return true;
     }
@@ -427,6 +432,7 @@ export function step(state) {
   regen(state, units, buildings);
   updateDomes(state);
   updateWeather(state);
+  settleReservations(state);
   removeDead(state);
   updateSupply(state);
   if (state.tick % 2 === 0) updateVisibility(state);
@@ -823,10 +829,9 @@ function buildStep(state, u, o) {
       if (!b || b.dead || b.done) { finishBuildOrder(state, u); return; }
       o.phase = 'constructing'; u.path = null; return;
     }
-    if (pl.minerals < d.cost[0] || pl.gas < d.cost[1]) { msg(state, u.owner, pl.minerals < d.cost[0] ? 'Not enough minerals' : 'Not enough gas'); finishBuildOrder(state, u); return; }
     const chk = checkPlacement(placementCtx(state, u.owner), o.btype, o.tx, o.ty);
-    if (!chk.ok) { msg(state, u.owner, chk.reason); finishBuildOrder(state, u); return; }
-    pl.minerals -= d.cost[0]; pl.gas -= d.cost[1];
+    if (!chk.ok) { msg(state, u.owner, chk.reason); finishBuildOrder(state, u); return; } // refunded by settleReservations
+    pl.reserved.delete(u.id); // paid when ordered: the money is now spent
     const b = createBuilding(state, u.owner, o.btype, o.tx, o.ty);
     if (style === 'construct') { o.bid = b.id; o.phase = 'constructing'; u.path = null; }
     else if (style === 'morph') { killEntity(state, u, -1, true); state.players[u.owner].stats.losses--; }
@@ -861,6 +866,16 @@ function repairStep(state, u, o) {
   if (pl.minerals < m || pl.gas < g) { msg(state, u.owner, pl.minerals < m ? 'Not enough minerals to repair' : 'Not enough gas to repair'); finishBuildOrder(state, u); return; }
   pl.minerals -= m; pl.gas -= g;
   t.hp += hp; t.repairedAt = state.tick;
+}
+
+// A build paid for when ordered but never placed (worker killed, re-ordered, site blocked) gets its money back.
+function settleReservations(state) {
+  for (const pl of state.players) for (const [id, r] of pl.reserved) {
+    const u = state.ents.get(id);
+    if (u && !u.dead && u.order === r.order && r.order.phase === 'toSite') continue;
+    pl.reserved.delete(id);
+    pl.minerals += r.cost[0]; pl.gas += r.cost[1];
+  }
 }
 
 function finishBuildOrder(state, u) {

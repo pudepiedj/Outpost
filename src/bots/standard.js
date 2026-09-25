@@ -79,11 +79,8 @@ export function createBot({ player, faction, map, style = 'balanced' }) {
         scoutQueue = map.starts.filter(s => d2(s, home) > 5).map(s => ({ x: s.x, y: s.y }));
       }
 
-      // Budget: subtract the cost of buildings workers are on their way to place.
+      // Budget (buildings are paid for when ordered, so what's in the bank is really free).
       let minerals = obs.minerals, gas = obs.gas;
-      for (const w of units) if (w.order.type === 'build' && w.order.phase === 'toSite' && !w.order.bid) {
-        const c = BUILDINGS[w.order.btype].cost; minerals -= c[0]; gas -= c[1];
-      }
       let supplyFree = obs.supplyCap - obs.supplyUsed;
       const afford = c => minerals >= c[0] && gas >= c[1];
       const spend = c => { minerals -= c[0]; gas -= c[1]; };

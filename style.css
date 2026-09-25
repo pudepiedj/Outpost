@@ -82,6 +82,7 @@ button, select, input { font: inherit; color: inherit; }
 #card button:hover { border-color: var(--accent); background: linear-gradient(#233140, #151d27); }
 #card button.active { border-color: var(--good); box-shadow: inset 0 0 8px #6dff8a55; }
 #card button.dis { opacity: .38; }
+#card button.short .cost { color: #e88; }
 #card .empty { border: 1px dashed #1b232c; border-radius: 4px; }
 
 /* info panel */

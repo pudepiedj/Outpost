@@ -35,6 +35,14 @@ python3 ~/Development/Outpost/serve.py
 then open <http://127.0.0.1:8642>. A web server is needed because browsers won't load JS modules
 or Web Workers from `file://`.
 
+## Buildings and money
+
+A building is paid for the moment you place it (not when the worker arrives), so nothing else can spend that
+money on the way; you get it back if the build is cancelled or the worker is killed. While you are choosing a
+spot, the money is held for it. Short of money? Place it anyway: it is queued (dashed yellow outline), the
+worker waits at the site, the money is held as it comes in, and it goes up the moment you can afford it.
+Esc cancels a queued building.
+
 ## Economy assist
 
 With **Human + economy assist**, two switches appear in the top bar:
